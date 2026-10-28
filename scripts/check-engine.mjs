@@ -320,8 +320,28 @@ await check('E15: команда ждёт dom-ready, а не падает', asyn
   return 'до dom-ready null, после — тот же гость'
 })
 
+await check('E16: восстановление гостя не превращается в лавину', async () => {
+  const hostLoop = new FakeElement('div')
+  body.appendChild(hostLoop)
+  await engine.showSession('loop', 'https://loop.example/', hostLoop)
+  const guest = engine.guestOf('loop')
+  expect(guest !== null, 'гость не создан')
+  guest.fire('dom-ready')
+  const before = engine.engineState().counters.recoveries
+  guest.fire('render-process-gone')
+  guest.fire('destroyed')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const after = engine.engineState().counters.recoveries
+  expect(after === before + 1, `recoveries выросли на ${after - before}, ожидалось 1`)
+  await engine.detachSession('loop')
+  const afterClose = engine.engineState().counters.recoveries
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  expect(engine.engineState().counters.recoveries === afterClose, 'закрытие сессии засчитано как падение')
+  return 'одно падение → одно восстановление; закрытие не считается'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 15/15')
+console.log('ENGINE OK: 16/16')

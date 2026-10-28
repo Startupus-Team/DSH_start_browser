@@ -54,6 +54,9 @@ interface Session {
   ready: boolean
   /** Navigation requested before `dom-ready`; applied once the guest is ready. */
   pendingUrl: string
+  /** Recovery bookkeeping: a crash loop must stop, not spin. */
+  recoveryAttempts: number
+  lastRecoveryAt: number
   /** The first navigation already happened; later dom-ready events must not repeat it. */
   navigated: boolean
 }
@@ -423,6 +426,8 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     host,
     ready: false,
     pendingUrl: '',
+    recoveryAttempts: 0,
+    lastRecoveryAt: 0,
     navigated: false,
   }
   sessions.set(tabId, session)
@@ -453,6 +458,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
         return
       }
       session.navigated = true
+      session.recoveryAttempts = 0
       const remembered = session.url.startsWith('about:blank') ? '' : session.url
       const target = session.pendingUrl !== '' ? session.pendingUrl : (remembered === '' ? initialUrl : remembered)
       session.pendingUrl = ''
@@ -465,11 +471,13 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     created.addEventListener('did-navigate-in-page', () => onNavigate(session, created))
     created.addEventListener('page-title-updated', () => onTitle(session, created))
     created.addEventListener('console-message', (event: Event) => {
-      const detail = (event as CustomEvent<{ level?: number; message?: string }>).detail
-      consoleRing.push({
-        level: typeof detail?.level === 'number' ? detail.level : 0,
-        message: String(detail?.message ?? '').slice(0, 300),
-      })
+      // Electron versions differ: the payload may live on `detail` or directly
+      // on the event. Reading only one of them produced empty messages.
+      const detail = (event as CustomEvent<{ level?: number; message?: string; text?: string }>).detail
+      const loose = event as unknown as { level?: number; message?: string; text?: string }
+      const level = typeof loose.level === 'number' ? loose.level : (typeof detail?.level === 'number' ? detail.level : 0)
+      const message = String(loose.message ?? loose.text ?? detail?.message ?? detail?.text ?? '')
+      consoleRing.push({ level, message: message.slice(0, 300) })
       while (consoleRing.length > 200) consoleRing.shift()
     })
     const onLost = (kind: string) => (): void => {
@@ -525,6 +533,19 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
  */
 function handleGuestLoss(session: Session, kind: string): void {
   if (session.guest === null) return
+  // A closed session is disposed on purpose: no recovery, no counter.
+  if (sessions.get(session.tabId) !== session) return
+  const now = Date.now()
+  if (now - session.lastRecoveryAt < 3000) return
+  session.lastRecoveryAt = now
+  if (session.recoveryAttempts >= 3) {
+    setStatus(`E_GUEST_LOOP: гость падает (${kind}) больше 3 раз — остановил восстановление, переоткройте вкладку`)
+    session.guest = null
+    session.ready = false
+    notify()
+    return
+  }
+  session.recoveryAttempts += 1
   counters.recoveries += 1
   session.guest = null
   session.ready = false
@@ -533,9 +554,15 @@ function handleGuestLoss(session: Session, kind: string): void {
   notify()
   const host = session.host
   const url = session.url.startsWith('about:blank') ? START_URL : session.url
+  probe('guest:lost', { tabId: session.tabId, kind, attempt: session.recoveryAttempts })
   window.setTimeout(() => {
     if (sessions.get(session.tabId) !== session) return
     sessions.delete(session.tabId)
+    try {
+      session.container.remove()
+    } catch {
+      // already gone
+    }
     void showSession(session.tabId, url, host)
   }, 0)
 }
