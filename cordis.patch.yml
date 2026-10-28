@@ -1,0 +1,10 @@
+# Startapus Browser — bundle overlay.
+# Inserted by the DSH loader because package.json declares
+#   dsh.bundle.patch = "./cordis.patch.yml"
+# `name` is the package name resolved from the profile's node_modules.
+- insert:
+  - id: startapus-browser
+    name: startapus-browser
+    config:
+      startUrl: about:blank
+      allowArbitrarySites: true

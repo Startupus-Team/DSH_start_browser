@@ -1,0 +1,49 @@
+{
+  "name": "startapus-browser",
+  "version": "0.1.0",
+  "description": "Startapus Browser — <webview> browser tab for the DSH right sidebar, with a DOM element picker.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.0",
+    "react": ">=18.2.0 <19"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "react-icons": "5.4.0"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "selftest": "node build.mjs && node scripts/check-scripts.mjs && node scripts/check-rules.mjs && node scripts/check-engine.mjs && node scripts/check-client-imports.mjs && node scripts/check-client-apply.mjs && node scripts/check-tools.mjs && node scripts/selftest.mjs",
+    "live": "node scripts/live-check.mjs",
+    "check-scripts": "node scripts/check-scripts.mjs",
+    "check-apply": "node scripts/check-client-apply.mjs",
+    "check-rules": "node scripts/check-rules.mjs",
+    "check-engine": "node scripts/check-engine.mjs",
+    "check-imports": "node scripts/check-client-imports.mjs",
+    "check-tools": "node scripts/check-tools.mjs"
+  }
+}

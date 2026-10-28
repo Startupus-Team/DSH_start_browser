@@ -1,0 +1,260 @@
+/**
+ * String builders for the scripts injected into the guest page.
+ *
+ * These are pure functions (no DOM), so their *output* can be syntax-checked in
+ * Node before shipping: a missing brace here surfaces in the guest as
+ * "Script failed to execute" and silently breaks verification.
+ *
+ * @module startapus-browser/client/verify-scripts
+ */
+
+/** Measure one acceptance predicate on a re-resolved locator. */
+export function measureScript(selector: string, method: string, property: string, expectTag: string): string {
+  const sel = JSON.stringify(selector)
+  const prop = JSON.stringify(property)
+  const m = JSON.stringify(method)
+  const tag = JSON.stringify(expectTag)
+  return `(() => {
+    try {
+      var matches = document.querySelectorAll(${sel});
+      if (matches.length === 0) return JSON.stringify({ status: 'MISSING' });
+      if (matches.length > 1) return JSON.stringify({ status: 'AMBIGUOUS', count: matches.length });
+      var el = matches[0];
+      var expectTag = ${tag};
+      if (expectTag !== '' && el.tagName.toLowerCase() !== expectTag) {
+        return JSON.stringify({ status: 'STALE', tag: el.tagName.toLowerCase(), expect: expectTag });
+      }
+      var method = ${m};
+      var cs = window.getComputedStyle(el);
+      var value;
+      if (method === 'exists') {
+        value = '1';
+      } else if (method === 'visible') {
+        var box = el.getBoundingClientRect();
+        value = (cs.display !== 'none' && cs.visibility !== 'hidden' && box.width > 0 && box.height > 0) ? '1' : '0';
+      } else if (method === 'text') {
+        value = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 300);
+      } else if (method === 'box') {
+        var rect = el.getBoundingClientRect();
+        value = Math.round(rect.width) + 'x' + Math.round(rect.height);
+      } else {
+        value = cs.getPropertyValue(${prop}) || '';
+      }
+      return JSON.stringify({ status: 'OK', tag: el.tagName.toLowerCase(), value: value });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
+
+/** Count how many covered elements of an area are still present. */
+export function coverageScript(covered: Array<{ tag: string; id: string; classes: string }>): string {
+  const items = JSON.stringify(covered.map((item) => ({
+    tag: item.tag ?? '',
+    id: item.id ?? '',
+    cls: String(item.classes ?? '').split(/\s+/).filter(Boolean)[0] ?? '',
+  })))
+  return `(() => {
+    try {
+      var items = ${items};
+      var found = 0;
+      for (var index = 0; index < items.length; index += 1) {
+        var item = items[index];
+        if (item.tag === '') continue;
+        var selector = item.tag + (item.id === '' ? '' : '[id="' + item.id + '"]') +
+          (item.cls === '' ? '' : '.' + item.cls);
+        if (document.querySelector(selector) !== null) found += 1;
+      }
+      return JSON.stringify({ status: 'OK', found: found, total: items.length });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
+
+/**
+ * Evidence script: build the same portrait the picker produces, but for a
+ * selector chosen by the agent — no human click required.
+ */
+export function evidenceScript(selector: string): string {
+  const sel = JSON.stringify(selector)
+  return `(() => {
+    try {
+      var matches = document.querySelectorAll(${sel});
+      if (matches.length === 0) return JSON.stringify({ status: 'MISSING' });
+      if (matches.length > 1) return JSON.stringify({ status: 'AMBIGUOUS', count: matches.length });
+      var el = matches[0];
+      function path(node) {
+        var parts = [];
+        while (node && node.nodeType === 1 && parts.length < 6) {
+          var part = node.tagName.toLowerCase();
+          if (node.id) { parts.unshift(part + '#' + node.id); break; }
+          var cls = (node.className || '').toString().trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          if (cls.length) part += '.' + cls.join('.');
+          var parent = node.parentElement;
+          if (parent) {
+            var same = Array.prototype.filter.call(parent.children, function (c) { return c.tagName === node.tagName; });
+            var index = same.indexOf(node);
+            if (index >= 0) part += ':nth-of-type(' + (index + 1) + ')';
+          }
+          parts.unshift(part);
+          node = node.parentElement;
+        }
+        return parts.join(' > ');
+      }
+      var props = ['display','position','visibility','opacity','box-sizing','width','height',
+        'margin-top','margin-bottom','padding-left','padding-right','gap','flex-direction',
+        'font-family','font-size','font-weight','line-height','color','background-color',
+        'border-radius','border-color','box-shadow','overflow','text-align'];
+      var computed = {};
+      var cs = window.getComputedStyle(el);
+      for (var index = 0; index < props.length; index += 1) {
+        var name = props[index];
+        var value = cs.getPropertyValue(name);
+        if (value !== '' && value !== 'normal' && value !== 'none' && value !== 'auto' && value !== '0px') computed[name] = value;
+      }
+      var rect = el.getBoundingClientRect();
+      var aria = el.getAttribute('aria-label') || (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 160);
+      return JSON.stringify({
+        status: 'OK',
+        evidence: {
+          selector: path(el),
+          tag: el.tagName.toLowerCase(),
+          id: el.id || '',
+          classes: (el.className || '').toString().trim().slice(0, 300),
+          testid: el.getAttribute('data-testid') || '',
+          role: el.getAttribute('role') || '',
+          a11y: { role: el.getAttribute('role') || el.tagName.toLowerCase(), name: aria },
+          text: (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 300),
+          href: el.getAttribute('href') || '',
+          rect: { x: Math.round(rect.left), y: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height) },
+          box: { clientWidth: el.clientWidth, clientHeight: el.clientHeight, scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight },
+          state: { disabled: el.disabled === true, hidden: cs.display === 'none' || cs.visibility === 'hidden', focused: document.activeElement === el },
+          computed: computed,
+          env: {
+            url: String(location.href),
+            title: String(document.title || ''),
+            viewport: { width: window.innerWidth, height: window.innerHeight },
+            dpr: window.devicePixelRatio || 1,
+            zoom: window.visualViewport ? window.visualViewport.scale : 1,
+            scrollX: Math.round(window.scrollX),
+            scrollY: Math.round(window.scrollY)
+          }
+        }
+      });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
+
+/** Action script: click, type or scroll — initiated by the agent, not the user. */
+export function actScript(op: string, selector: string, value: string): string {
+  const operation = JSON.stringify(op)
+  const sel = JSON.stringify(selector)
+  const text = JSON.stringify(value)
+  return `(() => {
+    try {
+      var op = ${operation};
+      var sel = ${sel};
+      var value = ${text};
+      var el = sel === '' ? null : document.querySelector(sel);
+      if (sel !== '' && el === null) return JSON.stringify({ status: 'MISSING' });
+      if (op === 'click') {
+        if (el === null) return JSON.stringify({ status: 'MISSING' });
+        el.scrollIntoView({ block: 'center' });
+        el.click();
+        return JSON.stringify({ status: 'OK', op: op });
+      }
+      if (op === 'type') {
+        if (el === null) return JSON.stringify({ status: 'MISSING' });
+        el.focus();
+        el.value = value;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return JSON.stringify({ status: 'OK', op: op, length: value.length });
+      }
+      if (op === 'scroll') {
+        var y = Number.parseInt(value, 10);
+        if (el !== null) el.scrollIntoView({ block: 'center' });
+        else window.scrollTo(0, Number.isFinite(y) ? y : 0);
+        return JSON.stringify({ status: 'OK', op: op, scrollY: Math.round(window.scrollY) });
+      }
+      return JSON.stringify({ status: 'ERROR', message: 'неизвестная операция: ' + op });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
+
+/**
+ * Page scan: a compact, stable list of meaningful/interactive nodes with
+ * `ref_N` handles — the same idea as Claude's `read_page`, built from the DOM
+ * because CDP Accessibility is not available to a sandboxed plugin.
+ */
+export function pageScanScript(limit: number): string {
+  return `(() => {
+    try {
+      var MAX = ${limit};
+      var items = [];
+      var seen = 0;
+      function path(node) {
+        var parts = [];
+        while (node && node.nodeType === 1 && parts.length < 5) {
+          var part = node.tagName.toLowerCase();
+          if (node.id) { parts.unshift(part + '#' + node.id); break; }
+          var cls = (node.className || '').toString().trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          if (cls.length) part += '.' + cls.join('.');
+          var parent = node.parentElement;
+          if (parent) {
+            var same = Array.prototype.filter.call(parent.children, function (c) { return c.tagName === node.tagName; });
+            var index = same.indexOf(node);
+            if (index >= 0) part += ':nth-of-type(' + (index + 1) + ')';
+          }
+          parts.unshift(part);
+          node = node.parentElement;
+        }
+        return parts.join(' > ');
+      }
+      function name(node) {
+        var aria = node.getAttribute('aria-label');
+        if (aria) return aria;
+        var labelled = node.getAttribute('aria-labelledby');
+        if (labelled) {
+          var byId = document.getElementById(labelled);
+          if (byId) return (byId.textContent || '').trim().slice(0, 120);
+        }
+        var alt = node.getAttribute('alt') || node.getAttribute('title') || node.getAttribute('placeholder');
+        if (alt) return String(alt).slice(0, 120);
+        return (node.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
+      }
+      var walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+      var node = walk.currentNode;
+      while (node && items.length < MAX) {
+        var tag = node.tagName.toLowerCase();
+        var role = node.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' || tag === 'textarea' ? 'textbox' : tag === 'select' ? 'combobox' : '');
+        var interactive = ['a','button','input','textarea','select','summary','details','label'].indexOf(tag) >= 0 || role !== '';
+        var heading = /^h[1-6]$/.test(tag);
+        if (interactive || heading) {
+          var rect = node.getBoundingClientRect();
+          var style = window.getComputedStyle(node);
+          var visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+          items.push({
+            ref: 'ref_' + (items.length + 1),
+            role: role || (heading ? 'heading' : tag),
+            tag: tag,
+            name: name(node),
+            selector: path(node),
+            visible: visible,
+            disabled: node.disabled === true
+          });
+        }
+        seen += 1;
+        node = walk.nextNode();
+      }
+      return JSON.stringify({ status: 'OK', scanned: seen, total: items.length, items: items, url: String(location.href) });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}

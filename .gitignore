@@ -1,0 +1,5 @@
+node_modules/
+.chromium-deps/
+*.log
+.DS_Store
+tmp/
