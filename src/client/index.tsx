@@ -136,7 +136,7 @@ export function apply(ctx: ClientContext): void {
       }) => () => void
     } | undefined
     shortcuts?.registerFixed?.({
-      id: 'startapus-browser.open',
+      id: 'startapus-browser.new',
       label: () => 'Открыть Startapus Browser',
       keys: ['Cmd+T'],
       bindings: [{ code: 'KeyT', modifiers: ['Meta'] }],
@@ -204,6 +204,8 @@ export function apply(ctx: ClientContext): void {
     priority: 'extension' as const,
     title: () => 'Startapus Browser',
     guide: [{
+      id: 'new',
+      commandId: 'startapus-browser.new',
       order: 10,
       title: () => 'Startapus Browser',
       description: () => 'Браузер в правой панели: произвольные сайты и выделение элементов',
