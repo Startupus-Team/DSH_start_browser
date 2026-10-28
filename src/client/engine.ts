@@ -107,6 +107,8 @@ let pickRequested: () => void = () => undefined
 let openTabRequested: ((url: string) => boolean) | null = null
 /** Front a tab through the pane's bound actions. */
 let focusTabRequested: ((tabId: string) => boolean) | null = null
+/** DOM fallback: click our guide card (the kernel then opens the tab properly). */
+let guideCardFallback: (() => boolean) | null = null
 /** Last address-bar attempt, reported so a silent failure becomes visible. */
 /** What the shortcuts catalog actually accepted (reported for diagnosis). */
 let shortcutState: { id: string; keys: string; ok: boolean; error: string } | null = null
@@ -231,10 +233,21 @@ export function openInSession(tabId: string, rawUrl: string): { ok: boolean; rea
 }
 
 /** Open one more Startapus tab: bound actions first, controller as fallback. */
-export function requestOpenTab(url = ''): { ok: boolean; via: 'pane' | 'controller'; error: string } {
+export function requestOpenTab(url = ''): { ok: boolean; via: 'pane' | 'controller' | 'guide'; error: string } {
   if (openTabRequested !== null && openTabRequested(url)) return { ok: true, via: 'pane', error: '' }
   const fallback = openStartapusTab('startapus-browser', url === '' ? {} : { url })
-  return { ok: fallback.opened, via: 'controller', error: fallback.error }
+  if (!fallback.opened) return { ok: false, via: 'controller', error: fallback.error }
+  // The controller can create a tab nobody activates when no pane exists yet;
+  // clicking our guide card goes through the kernel's own gesture path.
+  if (mountedPaneKeys.size === 0 && guideCardFallback !== null && guideCardFallback()) {
+    return { ok: true, via: 'guide', error: '' }
+  }
+  return { ok: true, via: 'controller', error: '' }
+}
+
+/** Install the DOM fallback used when no pane exists yet. */
+export function setGuideFallback(run: () => boolean): void {
+  guideCardFallback = run
 }
 
 /** The human takes the page back: agent mutations are refused from now on. */

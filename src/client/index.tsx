@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { StartapusBrowserPanel } from './panel.tsx'
 import { elementSource, insertElementRef, type ElementPick } from './element-refs.ts'
-import { noteShortcutState, requestOpenTab, shortcutHint, startEngine } from './engine'
+import { noteShortcutState, requestOpenTab, setGuideFallback, shortcutHint, startEngine } from './engine'
 import { markTabClosing, registerTabsCloseHandler } from './tabs'
 import { setTabsApi } from './tabs'
 import { useTabTitle } from './tab-titles'
@@ -187,6 +187,29 @@ export function apply(ctx: ClientContext): void {
     })
   } catch (error) {
     noteShortcutState({ id: 'startapus-browser.new', keys: '', ok: false, error: String(error) })
+  }
+
+  // Last-resort opener: click our guide card in the sidebar (same gesture the
+  // user makes). Needed because a controller-level open creates a tab that the
+  // kernel does not activate when the column has no pane yet.
+  try {
+    setGuideFallback(() => {
+      try {
+        const title = 'Startapus Browser'
+        const nodes = Array.from(document.querySelectorAll<HTMLElement>('[role="button"], button, a'))
+        for (const node of nodes) {
+          if (!(node.textContent ?? '').includes(title)) continue
+          if ((node as HTMLElement).closest('.dsh-startapus-browser') !== null) continue
+          node.click()
+          return true
+        }
+        return false
+      } catch {
+        return false
+      }
+    })
+  } catch {
+    // optional
   }
 
   try {
