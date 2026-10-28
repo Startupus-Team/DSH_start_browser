@@ -1191,7 +1191,9 @@ export function startEngine(): void {
   // If nothing ever activates a session, the channel is alive but there is no
   // page: say it out loud instead of waiting for a mystery.
   window.setTimeout(() => {
-    if (sessions.size === 0) setStatus('сессия не активирована: панель не смонтировалась?')
+    if (sessions.size === 0) {
+      setStatus('нет открытой вкладки: нажмите ⌘T (Ctrl+T) — первую вкладку открывает человек, дальше агент управляет сам')
+    }
   }, 6000)
   window.setInterval(collectIdleSessions, 60000)
 }
