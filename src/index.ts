@@ -15,6 +15,7 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import { LAB_DATA, LAB_HTML, LAB_OTHER_HTML } from './lab'
 
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -478,6 +479,13 @@ export function loadTasks(): number {
 }
 
 /** Send a JSON response. */
+/** Raw text response (HTML fixtures must not be JSON-encoded). */
+function sendText(res: unknown, status: number, type: string, body: string): void {
+  const target = res as { writeHead(code: number, headers: Record<string, string>): void; end(text: string): void }
+  target.writeHead(status, { 'content-type': type, 'cache-control': 'no-store' })
+  target.end(body)
+}
+
 function sendJson(res: unknown, status: number, body: unknown): void {
   const target = res as { writeHead(code: number, headers: Record<string, string>): void; end(text: string): void }
   target.writeHead(status, {
@@ -980,6 +988,24 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
     }
     if (mutating && method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'E_METHOD: только POST' })
+      return
+    }
+
+    // Test lab (fixtures for every tool; also served by scripts/lab-server.mjs).
+    if (path.endsWith('/lab') || path.endsWith('/lab/')) {
+      sendText(res, 200, 'text/html; charset=utf-8', LAB_HTML)
+      return
+    }
+    if (path.endsWith('/lab/other')) {
+      sendText(res, 200, 'text/html; charset=utf-8', LAB_OTHER_HTML)
+      return
+    }
+    if (path.endsWith('/lab/data')) {
+      sendText(res, 200, 'application/json; charset=utf-8', LAB_DATA)
+      return
+    }
+    if (path.endsWith('/lab/missing')) {
+      sendText(res, 404, 'application/json; charset=utf-8', '{"ok":false,"error":"lab-missing"}')
       return
     }
 

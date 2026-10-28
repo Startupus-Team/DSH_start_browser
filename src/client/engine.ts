@@ -894,6 +894,13 @@ function onNavigate(session: Session, guest: GuestElement): void {
     const url = String(guest.getURL?.() ?? session.url)
     void note('guest:navigated', { tabId: session.tabId, host: hostOf(url) })
     if (!url.startsWith('about:blank')) session.url = url
+    // Keep the pane's desired URL in sync with reality: otherwise a later
+    // reconcile (new instance / remount) navigates back to the stale default
+    // and the lab/typed page is lost.
+    const pane = paneState.get(session.tabId)
+    if (pane !== undefined && !url.startsWith('about:blank') && pane.url !== url) {
+      paneState.set(session.tabId, { ...pane, url })
+    }
     setTabTitle(session.tabId, session.title === '' ? session.url : session.title)
     notify()
   } catch {
