@@ -989,6 +989,7 @@ export function startEngine(): void {
         sessions: listSessions(),
         activeTab: activeTabId,
         panels: mountedPaneKeys.size,
+        panes: [...mountedPaneKeys],
         control: controlHolder,
         agentActive: Date.now() < agentActiveUntil,
       })
