@@ -41,7 +41,36 @@ Experimental plugins → «Custom plugin markets»**. После включен�
 пакет по этому имени). Если публиковать под scope (`@user/startapus-browser`), поправь `name:`
 в `cordis.patch.yml` — скрипт `npm run market` это проверяет и падает с подсказкой.
 
-## Шаги выпуска
+## Публикация Startapus Browser — где что лежит
+
+| Что | Адрес |
+|---|---|
+| Репозиторий | https://github.com/Startupus-Team/DSH_start_browser |
+| Индекс маркета (его добавляют в Discover) | https://raw.githubusercontent.com/Startupus-Team/DSH_start_browser/master/market-index.json |
+| Иконка индекса | https://raw.githubusercontent.com/Startupus-Team/DSH_start_browser/master/icon.svg |
+| Версия в индексе | 0.25.0, `source.type = git`, закреплённый коммит |
+
+### Как установить (для пользователя DSH)
+
+1. **Plugins → More → Experimental plugins → «Custom plugin markets»** — включить.
+2. **Problem → Discover → Add source** — вставить
+   `https://raw.githubusercontent.com/Startupus-Team/DSH_start_browser/master/market-index.json`.
+3. Выбрать **Startapus Browser** → **Install** (DSH поставит бандл из git-коммита).
+4. Перезапустить DSH; открыть правый сайдбар и нажать **`⌘T`**.
+
+### Как выпустить новую версию
+
+```bash
+npm version 0.26.0 --no-git-tag-version
+npm run gate
+node scripts/market-pack.mjs --git-source    # пересобирает индекс на текущий HEAD
+git add -A && git commit -m "release: 0.26.0"
+git tag v0.26.0 && git push origin master --tags
+```
+
+Индекс попадёт в тот же raw-URL автоматически (файл `market-index.json` в корне).
+
+## Шаги выпуска (общий случай, npm)
 
 ```bash
 # 0) поднять версию и дописать CHANGELOG
