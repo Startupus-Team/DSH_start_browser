@@ -311,10 +311,10 @@ await check('E15: команда ждёт dom-ready, а не падает', asyn
   await engine.showSession('wait', 'https://wait.example/', hostWait)
   const guest = engine.guestOf('wait')
   expect(guest !== null, 'гость не создан')
-  const early = await engine.awaitReadyForTest({ args: {} }, 150)
+  const early = await engine.awaitReadyForTest({ args: { tabId: 'wait' } }, 150)
   expect(early === null, 'недозрелый гость отдан как готовый')
   guest.fire('dom-ready')
-  const late = await engine.awaitReadyForTest({ args: {} }, 150)
+  const late = await engine.awaitReadyForTest({ args: { tabId: 'wait' } }, 150)
   expect(late === guest, 'после dom-ready гость не найден')
   return 'до dom-ready null, после — тот же гость'
 })

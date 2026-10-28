@@ -497,7 +497,13 @@ async function readyView(command: { args: Record<string, unknown> }, timeoutMs =
       candidate = sessions.get(activeTabId ?? '') ?? candidate
     }
   }
-  // Never substitute another tab: addressing is the whole point of the wait.
+  // Without an explicit tabId the caller means "the page that is on screen", so a
+  // ready attached session is a valid answer even if the active pointer drifted.
+  if (tabId === '') {
+    for (const session of sessions.values()) {
+      if (session.ready && session.guest !== null && session.container.isConnected) return session.guest
+    }
+  }
   return null
 }
 
