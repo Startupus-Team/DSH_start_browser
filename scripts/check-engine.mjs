@@ -420,8 +420,26 @@ await check('E20: упавшая вкладка не поднимается са
   return 'падение удерживается, восстановление только вручную'
 })
 
+await check('E21: показ существующей вкладки переключает активную и URL', async () => {
+  const hostA = new FakeElement('div')
+  const hostB = new FakeElement('div')
+  body.appendChild(hostA)
+  body.appendChild(hostB)
+  engine.setPaneState('switchA', { url: 'https://a.example/', host: hostA, visible: true })
+  engine.setPaneState('switchB', { url: 'https://b.example/', host: hostB, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 160))
+  engine.guestOf('switchA')?.fire('dom-ready')
+  engine.guestOf('switchB')?.fire('dom-ready')
+  engine.setPaneState('switchB', { visible: false })
+  engine.setPaneState('switchA', { visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  expect(engine.engineState().activeTab === 'switchA', `активная вкладка: ${String(engine.engineState().activeTab)}`)
+  expect((engine.engineState().url ?? '').includes('a.example'), `url: ${String(engine.engineState().url)}`)
+  return 'activeTab и url переключились на показанную вкладку'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 20/20')
+console.log('ENGINE OK: 21/21')
