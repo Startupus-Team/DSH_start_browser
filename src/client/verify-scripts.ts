@@ -191,7 +191,7 @@ export function actScript(op: string, selector: string, value: string): string {
       if (op === 'type') {
         if (el === null) return JSON.stringify({ status: 'MISSING' });
         el.focus();
-        // React tracks values through the native setter: a plain `el.value = ...`
+        // React tracks values through the native setter: assigning el.value directly
         // leaves its state empty, so Enter-on-submit did nothing on startapus.
         var proto = null;
         if (typeof HTMLTextAreaElement !== 'undefined' && el instanceof HTMLTextAreaElement) proto = HTMLTextAreaElement.prototype;
