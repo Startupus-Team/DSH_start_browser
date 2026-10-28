@@ -115,9 +115,12 @@ let closeRequested: () => boolean = () => false
 const tabClosers = new Map<string, () => boolean>()
 
 /** A panel offers the kernel's closeTab for its own tab; `ui_close_tab` uses it so the strip entry disappears too. */
-export function setTabCloser(tabKey: string, closer: (() => boolean) | null): void {
-  if (closer === null) tabClosers.delete(tabKey)
-  else tabClosers.set(tabKey, closer)
+export function setTabCloser(tabKey: string, closer: () => boolean): () => void {
+  tabClosers.set(tabKey, closer)
+  // Remove only our own entry: a remounted pane registers its closer before the old one cleans up.
+  return () => {
+    if (tabClosers.get(tabKey) === closer) tabClosers.delete(tabKey)
+  }
 }
 let pickRequested: () => void = () => undefined
 /** Opening a tab through the pane's own bound actions (falls back to the controller). */
@@ -1413,8 +1416,12 @@ export function startEngine(): () => void {
             // left an empty pane behind.
             const kernelClosed = tabClosers.get(requested)?.() === true
             if (kernelClosed) {
-              await new Promise((resolve) => setTimeout(resolve, 600))
-              if (sessions.has(requested)) closeSession(requested)
+              // The kernel's close handler disposes the session itself (and releases the lease).
+              for (let waited = 0; waited < 1500 && sessions.has(requested); waited += 100) {
+                await new Promise((resolve) => setTimeout(resolve, 100))
+              }
+              // Still there: forget it without releasing — the kernel owns the lease, a second release would fail.
+              if (sessions.has(requested)) disposeSession(requested)
               via = 'kernel'
               closed = true
             } else {

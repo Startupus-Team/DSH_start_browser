@@ -13,13 +13,12 @@ export type AddressResult =
   | { ok: true; url: string }
   | { ok: false; reason: string }
 
-const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
+/** Loopback, link-local and private-network hosts (whole-host match: `10.example.com` is a public name). */
+const PRIVATE_HOST = /^(localhost|[^.]+\.localhost|0\.0\.0\.0|\[::1?\]|127(\.\d{1,3}){3}|10(\.\d{1,3}){3}|192\.168(\.\d{1,3}){2}|169\.254(\.\d{1,3}){2}|172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2})$/i
 
 /** Schemes that are recognised (and refused) even without `//`, so `host:port` is not mistaken for one. */
 const NAMED_SCHEME = /^(javascript|data|file|about|mailto|blob|view-source|chrome|chrome-extension|ftp|ws|wss|tel|sms):/i
 
-/** Hosts a person types for local development: they get plain http by default (dev servers rarely have TLS). */
-const LOCAL_DEV_HOST = /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\])/i
 
 /**
  * Turn what was typed into a safe http(s) URL.
@@ -32,7 +31,9 @@ export function normalizeAddress(raw: string, options: { allowPrivate?: boolean 
   const value = (raw ?? '').trim()
   if (value === '') return { ok: false, reason: 'пустой адрес' }
   const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || NAMED_SCHEME.test(value)
-  const defaultScheme = LOCAL_DEV_HOST.test(value) ? 'http' : 'https'
+  // `localhost:3000`, `192.168.1.5/app`: judge the host part only, so `10.example.com` stays https.
+  const bareHost = value.split(/[/?#]/)[0].replace(/^.*@/, '').replace(/:\d+$/, '')
+  const defaultScheme = PRIVATE_HOST.test(bareHost) ? 'http' : 'https'
   const withScheme = hasScheme ? value : `${defaultScheme}://${value}`
   let parsed: URL
   try {

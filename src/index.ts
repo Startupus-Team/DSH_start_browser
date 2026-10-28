@@ -1589,7 +1589,7 @@ function createTask(args: Record<string, unknown>): Record<string, unknown> {
     env?: Record<string, unknown>
   } | null : null
   if (args.fromArea === true && (areaPayload === null || areaPayload === undefined)) {
-    throw new Error('E_NO_PICK: область не выделена — вызовите ui_pick_area')
+    throw new Error('E_NO_PICK: область не выделена — вызовите ui_pick (mode=area)')
   }
   const covered = Array.isArray(areaPayload?.covered) ? areaPayload.covered : []
   if (args.fromArea === true && covered.length === 0) {
@@ -1645,7 +1645,7 @@ function buildTools(): Array<Record<string, unknown>> {
   })
 
   /** `tabId` selector shared by the page-facing tools. */
-const tabIdParam = { type: 'string', description: 'Ключ вкладки из ui_tabs (по умолчанию активная)' } as const
+const tabIdParam = { type: 'string', description: 'Ключ вкладки из ui_tab (action=list) (по умолчанию активная)' } as const
 
 /**
  * Tool failure with a machine-readable code and a human hint.
@@ -1880,7 +1880,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       name: 'ui_focus_tab',
       description: 'Вывести вкладку Startapus на передний план (как клик по вкладке). Нужно, чтобы проверить переключение и увидеть страницу. Результат — в ui_status.focusTabResult.',
       parameters: objectSchema({
-        tabId: { type: 'string', description: 'Ключ вкладки из ui_tabs' },
+        tabId: { type: 'string', description: 'Ключ вкладки из ui_tab (action=list)' },
       }, ['tabId']),
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
@@ -2122,7 +2122,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       parameters: objectSchema({}, []),
       output: output(asText),
       execute: () => {
-        if (client.area === null) throw new Error('E_NO_PICK: область не выделена — вызовите ui_pick_area')
+        if (client.area === null) throw new Error('E_NO_PICK: область не выделена — вызовите ui_pick (mode=area)')
         return { available: true, area: client.area }
       },
     },
@@ -2143,7 +2143,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         width: { type: 'number', description: 'Целевая ширина вьюпорта в CSS px (240–2400) — подбирается масштабом' },
         preset: { type: 'string', enum: ['mobile', 'tablet', 'desktop'], description: 'Пресет ширины: mobile 390, tablet 768, desktop 1280 (сброс к 1x)' },
         colorScheme: { type: 'string', enum: ['dark', 'light', 'auto'], description: 'Эмуляция prefers-color-scheme для текущей страницы: dark | light | auto (сброс). Приблизительная, без CDP: переписывает media-запросы доступных стилей и matchMedia; режим запоминается за вкладкой и применяется после навигации' },
-        tabId: { type: 'string', description: 'Ключ вкладки из ui_tabs; только для colorScheme (по умолчанию активная)' },
+        tabId: { type: 'string', description: 'Ключ вкладки из ui_tab (action=list); только для colorScheme (по умолчанию активная)' },
       }, []),
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
@@ -2340,7 +2340,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         let targetUrl = client.url
         if (targetTab !== '') {
           const known = client.sessions.find((row) => row.tabId === targetTab)
-          if (known === undefined) fail('E_NOT_FOUND', `нет вкладки ${targetTab}`, 'список вкладок — ui_tabs')
+          if (known === undefined) fail('E_NOT_FOUND', `нет вкладки ${targetTab}`, "список вкладок — ui_tab (action=list)")
           targetUrl = known.url
         }
         let origin = ''
@@ -2713,7 +2713,7 @@ export function exposedToolSurface(legacyNames = false): Array<Record<string, un
       name: 'ui_status',
       description: use('ui_status').description as string + ' С guest:true добавляет диагностику гостя вкладки (адрес, title, readyState, длина текста).',
       parameters: compositeSchema({
-        guest: { type: 'boolean', description: 'Добавить диагностику гостя (бывший ui_guest_state)' },
+        guest: { type: 'boolean', description: 'Добавить диагностику гостя (диагностика гостя вкладки)' },
         tabId: tabIdProp,
       }),
       output: TEXT_OUTPUT,
@@ -2766,13 +2766,19 @@ export function exposedToolSurface(legacyNames = false): Array<Record<string, un
       description: use('task_create').description as string + ' Со списком items (до 20) создаёт пакет задач — пакетный аудит области.',
       parameters: {
         ...(use('task_create').parameters as Record<string, unknown>),
+        // `problem` is required only for a single task; a batch carries its own items.
+        required: [],
         properties: {
           ...((use('task_create').parameters as { properties: Record<string, unknown> }).properties),
           items: { type: 'array', description: 'Пакет задач: [{problem, method, property, expected, tolerance}]; взаимоисключает одиночные поля', items: { type: 'object', additionalProperties: true } },
         },
       },
       output: TEXT_OUTPUT,
-      execute: (args, exec) => (Array.isArray(args.items) ? delegate('task_batch', { items: args.items }, exec) : delegate('task_create', args, exec)),
+      execute: (args, exec) => {
+        if (Array.isArray(args.items)) return delegate('task_batch', { items: args.items }, exec)
+        if (typeof args.problem !== 'string' || args.problem.trim() === '') throw new Error('E_NO_EFFECT: нужен problem (одна задача) или items (пакет)')
+        return delegate('task_create', args, exec)
+      },
     },
     {
       name: 'task_list',
@@ -3657,6 +3663,9 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     const status = JSON.parse((await run('ui_status', {})).text) as Record<string, unknown>
     if (status.stage === undefined) throw new Error('ui_status потерял поля')
 
+    const createSpec = exposed.find((row) => row.name === 'task_create') as unknown as { parameters: { required: string[] } }
+    if (createSpec.parameters.required.length !== 0) throw new Error('task_create требует поля, хотя пакет их не несёт')
+    await rejects('E_NO_EFFECT', () => run('task_create', {}))
     const created = JSON.parse((await run('task_create', { items: [
       { problem: 'composite: a', method: 'computed', property: 'gap', expected: '8px' },
       { problem: 'composite: b', method: 'computed', property: 'gap', expected: '8px' },

@@ -42,6 +42,7 @@ import {
   subscribeEngine,
 } from './engine'
 import { normalizeAddress } from './rules'
+import { note } from './transport'
 import { activateOwnTab, setTabCloser } from './engine'
 import { focusStartapusTab } from './tabs'
 import { PICKER_POLL, PICKER_SCRIPT } from './picker-source'
@@ -99,6 +100,10 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   const [draft, setDraft] = useState(initialUrl)
   /** While the address field is focused it is the single source of truth. */
   const [editing, setEditing] = useState(false)
+  /** Why the last typed address was refused; shown under the toolbar until the next edit. */
+  const [addressNote, setAddressNote] = useState('')
+  /** First edit per focus is logged once, so a field that eats input shows up in the host log. */
+  const typedSinceFocus = useRef(false)
   const [picking, setPicking] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
   const [taskRows, setTaskRows] = useState<Array<{ id: string; problem: string; state: string; attempts: number }>>([])
@@ -210,8 +215,7 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   }, [props])
 
   useEffect(() => {
-    setTabCloser(tabKey, () => props.onClose?.() === true)
-    return () => setTabCloser(tabKey, null)
+    return setTabCloser(tabKey, () => props.onClose?.() === true)
   }, [tabKey, props])
 
   useEffect(() => {
@@ -225,6 +229,15 @@ function PanelChrome(props: PanelProps): React.ReactNode {
 
   const navigate = useCallback((next: string): void => {
     const result = openInSession(tabKey, next, true)
+    let host = ''
+    try {
+      host = new URL(result.url).host
+    } catch {
+      host = ''
+    }
+    // The typed text itself is never logged, only whether it was accepted and the host.
+    void note('address:submit', { ok: result.ok, reason: result.reason, host, length: next.length })
+    setAddressNote(result.ok ? '' : `Адрес не открыт: ${result.reason}`)
     if (!result.ok) setStatus(`адрес: ${result.reason}`)
   }, [tabKey])
 
@@ -277,15 +290,29 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           className="dsh-startapus-browser-address"
           value={address}
           placeholder="https://…"
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value)
+            if (addressNote !== '') setAddressNote('')
+            if (!typedSinceFocus.current) {
+              typedSinceFocus.current = true
+              void note('address:input', { length: event.target.value.length })
+            }
+          }}
           onFocus={(event) => {
+            typedSinceFocus.current = false
+            void note('address:focus', {})
             setDraft(shownUrl)
             setEditing(true)
             event.currentTarget.select()
           }}
-          onBlur={() => setEditing(false)}
+          onBlur={() => {
+            setEditing(false)
+            const active = document.activeElement
+            void note('address:blur', { typed: typedSinceFocus.current, to: active === null ? '' : `${active.tagName.toLowerCase()}${active.id === '' ? '' : `#${active.id}`}` })
+          }}
           onKeyDown={(event) => {
             if (event.key !== 'Enter') return
+            void note('address:enter', { editing, draftLength: draft.length })
             navigate(draft)
             setEditing(false)
             event.currentTarget.blur()
@@ -324,6 +351,7 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           <FiCrosshair />
         </button>
       </div>
+      {addressNote === '' ? null : <div role="alert" style={{ padding: '4px 10px', fontSize: 11, color: '#e5484d' }}>{addressNote}</div>}
       {tasksOpen && (
         <div className="dsh-startapus-browser-tasks" role="dialog" aria-label="Очередь задач">
           <div className="dsh-startapus-browser-tasksHead">

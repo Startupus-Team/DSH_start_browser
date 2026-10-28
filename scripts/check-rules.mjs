@@ -588,8 +588,19 @@ check('R24: адресная строка — localhost, host:port и схемы
   return 'человек: localhost/LAN/host:port открываются; опасные схемы закрыты; агент по-прежнему не ходит во внутреннюю сеть'
 })
 
+check('R25: защита от внутренней сети — по хосту целиком', () => {
+  expect(rules.normalizeAddress('http://10.example.com/').ok === true, '10.example.com — публичное имя, агенту можно')
+  expect(rules.normalizeAddress('127.example.org').url === 'https://127.example.org/', '127.example.org → https')
+  for (const raw of ['http://0.0.0.0/', 'http://[::1]/', 'http://169.254.169.254/latest', 'http://app.localhost/', 'http://10.1.2.3/', 'http://172.16.0.9/', 'http://127.0.0.1:8080/']) {
+    expect(rules.normalizeAddress(raw).ok === false, `${raw} открыт агенту`)
+  }
+  expect(rules.normalizeAddress('http://172.32.0.1/').ok === true, '172.32.x — не приватный диапазон')
+  expect(rules.normalizeAddress('user@host.test/path', { allowPrivate: true }).ok !== undefined, 'логин в адресе не ломает разбор')
+  return 'метаданные облака 169.254, ::1, 0.0.0.0, *.localhost закрыты; 10.example.com открыт'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 24/24')
+console.log('RULES OK: 25/25')

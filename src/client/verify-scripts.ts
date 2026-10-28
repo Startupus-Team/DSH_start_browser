@@ -291,7 +291,8 @@ export function actScript(op: string, selector: string, value: string): string {
               return n.getAttribute('tabindex') !== '-1' && !n.disabled && n.getBoundingClientRect().width > 0;
             });
             var at = focusables.indexOf(target);
-            var next = focusables[(at + (flags.shiftKey ? -1 : 1) + focusables.length) % Math.max(1, focusables.length)];
+            var count = Math.max(1, focusables.length);
+            var next = at < 0 ? (flags.shiftKey ? focusables[count - 1] : focusables[0]) : focusables[(at + (flags.shiftKey ? -1 : 1) + count) % count];
             if (next) next.focus();
           }
         }
