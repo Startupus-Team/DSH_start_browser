@@ -15,7 +15,7 @@ import { actScript, coverageScript, evidenceScript, inspectScript, measureScript
 import { cropRect as clampCropRect, normalizeAddress, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
-import { lastHostRev, note, poll, probe, report, setTab } from './transport'
+import { INSTANCE_ID, lastHostRev, note, poll, probe, report, setReportMeta, setTab } from './transport'
 
 /** A webview element plus the Electron methods we call. */
 export interface GuestElement extends HTMLElement {
@@ -207,6 +207,12 @@ export function subscribeEngine(listener: () => void): () => void {
 }
 
 function notify(): void {
+  try {
+    const attached = [...sessions.values()].some((session) => session.ready && session.guest !== null && session.container.isConnected)
+    setReportMeta({ attached, instanceId: INSTANCE_ID, panels: mountedPaneKeys.size })
+  } catch {
+    // meta is diagnostics only
+  }
   for (const listener of listeners) {
     try {
       listener()

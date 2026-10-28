@@ -212,6 +212,8 @@ const WIP_LIMIT = 5
 const tasks = new Map<string, ReviewTask>()
 /** taskId -> the verification currently travelling to the renderer. */
 const pendingVerifications = new Map<string, { commandId: string; at: number }>()
+/** Every client bundle instance that reported in: a stale one must not own page commands. */
+const clientInstances = new Map<string, { tabKey: string; attached: boolean; lastSeen: number }>()
 /** tool name -> call timestamps inside the current window. */
 const callLog = new Map<string, number[]>()
 const RATE_WINDOW_MS = 60_000
@@ -981,6 +983,9 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         clientRev: client.clientRev === '' ? null : client.clientRev,
         lastLoadError: client.lastLoadError,
         panelMounts: client.panelMounts,
+        instances: [...clientInstances.entries()]
+          .filter(([, row]) => Date.now() - row.lastSeen < 120000)
+          .map(([id, row]) => ({ id, attached: row.attached, tabKey: row.tabKey, ageMs: Date.now() - row.lastSeen })),
         revMatch: client.clientRev === '' ? null : client.clientRev === BUILD_REV,
         activeTab: client.engineActive,
         targetTab: client.engineActive,
@@ -1030,13 +1035,19 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       clientKey = key
       const keyState = stateFor(key)
       keyState.lastSeen = Date.now()
+      const pollInstance = clientInstances.get(typeof pollBody.instanceId === 'string' ? pollBody.instanceId : '')
+      const pageKind = (kind: string): boolean => !['new_tab', 'close_tab', 'activate_self', 'focus_tab'].includes(kind)
       // Long-poll: hold the request until a command appears (or the deadline),
       // so the agent's action latency does not depend on the client's interval.
       const wait = pollBody.wait === true
       const deadline = wait ? Date.now() + 15000 : Date.now()
       let command: Command | undefined
       for (;;) {
-        const index = commands.findIndex((row) => row.tab === key || row.tab === '*')
+        const index = commands.findIndex((row) => {
+          if (row.tab !== key && row.tab !== '*') return false
+          if (pageKind(row.kind) && pollInstance !== undefined && !pollInstance.attached) return false
+          return true
+        })
         if (index >= 0) {
           command = commands.splice(index, 1)[0]
           break
@@ -1085,6 +1096,17 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         probe('focustab:done', client.focusTabResult)
       }
       if (typeof body.panels === 'number') client.panels = body.panels
+      if (typeof body.instanceId === 'string' && body.instanceId !== '') {
+        const previous = clientInstances.get(body.instanceId)
+        clientInstances.set(body.instanceId, {
+          tabKey: typeof body.tabKey === 'string' ? body.tabKey : (previous?.tabKey ?? ''),
+          attached: body.attached === true,
+          lastSeen: Date.now(),
+        })
+        if (previous === undefined || previous.attached !== (body.attached === true)) {
+          probe('client:instance', { instanceId: body.instanceId, attached: body.attached === true, known: clientInstances.size })
+        }
+      }
       const notePayload = body.note as { name?: string; data?: Record<string, unknown>; at?: number } | undefined
       if (notePayload !== undefined && typeof notePayload.name === 'string') {
         probe(notePayload.name, notePayload.data ?? {})
@@ -2913,6 +2935,31 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'D2: очередь задач доступна панели', pass: true, detail: `${body.count} задач в ответе` })
   } catch (error) {
     results.push({ name: 'D2: очередь задач доступна панели', pass: false, detail: String(error) })
+  }
+
+  // A stale client instance (no attached guest) must not steal page commands.
+  try {
+    seedTransport()
+    commands.length = 0
+    const stale = fakeResponse()
+    await handleRoute(fakeRequest({ instanceId: 'inst-stale', attached: false }, 'POST', '/startapus-browser/client/event'), stale.res)
+    enqueue('read_page', { limit: 10 })
+    const noDelivery = fakeResponse()
+    await handleRoute(fakeRequest({ tabKey: 'startapus-browser', instanceId: 'inst-stale' }, 'POST', '/startapus-browser/client/poll'), noDelivery.res)
+    const empty = noDelivery.read().body as { command?: unknown }
+    if (empty.command !== undefined) throw new Error('команда ушла в экземпляр без гостя')
+
+    const live = fakeResponse()
+    await handleRoute(fakeRequest({ instanceId: 'inst-live', attached: true }, 'POST', '/startapus-browser/client/event'), live.res)
+    const delivered = fakeResponse()
+    await handleRoute(fakeRequest({ tabKey: 'startapus-browser', instanceId: 'inst-live' }, 'POST', '/startapus-browser/client/poll'), delivered.res)
+    const body = delivered.read().body as { command?: { kind?: string } }
+    if (body.command?.kind !== 'read_page') throw new Error(`живой экземпляр не получил команду: ${JSON.stringify(body)}`)
+    commands.length = 0
+    results.push({ name: 'INST-1: команды страницы не достаются мёртвому экземпляру', pass: true, detail: 'stale → пусто, attached → read_page' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'INST-1: команды страницы не достаются мёртвому экземпляру', pass: false, detail: String(error) })
   }
 
   // Human control blocks agent mutations.

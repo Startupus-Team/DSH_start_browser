@@ -22,6 +22,15 @@ export interface BridgeCommand {
 /** Candidate bases, tried in order until one answers `/health`. */
 const BASES = ['', 'dsh-app://app']
 
+/** Unique id of this client bundle instance (a stale instance must not own commands). */
+export const INSTANCE_ID = `inst-${Math.random().toString(36).slice(2, 10)}`
+
+/** Extra fields the engine adds to every report. */
+let reportMeta: Record<string, unknown> = {}
+export function setReportMeta(meta: Record<string, unknown>): void {
+  reportMeta = { ...reportMeta, ...meta }
+}
+
 /** Host build revision reported by the last poll ('' until known). */
 export let lastHostRev = ''
 
@@ -67,7 +76,7 @@ export async function poll(base: string): Promise<BridgeCommand | null> {
     const response = await fetch(`${base}/startapus-browser/client/poll`, {
       method: 'POST',
       headers: { ...authHeaders(), 'content-type': 'application/json' },
-      body: JSON.stringify({ tabKey: currentTab, wait: true }),
+      body: JSON.stringify({ tabKey: currentTab, wait: true, instanceId: INSTANCE_ID }),
     })
     if (!response.ok) return null
     if (response.status === 204) {
@@ -108,7 +117,7 @@ export async function report(base: string, payload: Record<string, unknown>): Pr
     await fetch(`${base}/startapus-browser/client/event`, {
       method: 'POST',
       headers: { ...authHeaders(), 'content-type': 'application/json' },
-      body: JSON.stringify({ ...payload, tabKey: currentTab }),
+      body: JSON.stringify({ ...reportMeta, ...payload, tabKey: currentTab, instanceId: INSTANCE_ID }),
     })
   } catch {
     // the next tick retries
