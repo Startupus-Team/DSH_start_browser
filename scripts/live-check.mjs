@@ -99,7 +99,7 @@ if (typeof counters.acquires === 'number' && typeof counters.releases === 'numbe
   failed += 1
 }
 if (health.body?.revMatch === false) {
-  console.log(`FAIL  клиент прислал другой отпечаток сборки: ${String(health.body?.clientRev ?? 'нет')} ≠ ${expectedRev}`)
+  console.log(`FAIL  рассинхрон сборок: клиент ${String(health.body?.clientRev ?? 'нет')}, host ${String(health.body?.buildRev ?? 'нет')} (исходники ${expectedRev}) — перезапустите DSH`)
   failed += 1
 }
 if (health.body?.transport !== true) {

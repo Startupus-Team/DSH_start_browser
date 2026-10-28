@@ -485,8 +485,10 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
       while (consoleRing.length > 200) consoleRing.shift()
     })
     const onLost = (kind: string) => (event: Event): void => {
+      // Electron versions put `reason` either on `detail` or on the event itself.
       const detail = (event as CustomEvent<{ reason?: string; details?: string }>).detail
-      const reason = detail?.reason ?? detail?.details ?? ''
+      const loose = event as unknown as { reason?: string; details?: string }
+      const reason = String(loose.reason ?? loose.details ?? detail?.reason ?? detail?.details ?? '')
       handleGuestLoss(session, reason === '' ? kind : `${kind}:${reason}`)
     }
     created.addEventListener('render-process-gone', onLost('render-process-gone'))
