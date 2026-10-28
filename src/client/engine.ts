@@ -1109,6 +1109,8 @@ async function decodePixels(dataUrl: string): Promise<{ data: Uint8ClampedArray;
 
 /** Compare a fresh screenshot with the remembered one, then remember the fresh one. */
 async function diffAgainstPrevious(key: string, dataUrl: string, compare: boolean): Promise<Record<string, unknown>> {
+  // Only `diff: true` captures are remembered: a full-screen data URL is megabytes.
+  if (!compare) return {}
   const previous = lastCaptures.get(key)
   lastCaptures.delete(key)
   lastCaptures.set(key, dataUrl)
@@ -1117,7 +1119,6 @@ async function diffAgainstPrevious(key: string, dataUrl: string, compare: boolea
     if (oldest === undefined) break
     lastCaptures.delete(oldest)
   }
-  if (!compare) return {}
   if (previous === undefined) return { hasPrevious: false }
   try {
     const [before, after] = await Promise.all([decodePixels(previous), decodePixels(dataUrl)])
@@ -1460,8 +1461,7 @@ export function startEngine(): () => void {
                 const base64 = comma > 0 ? dataUrl.slice(comma + 1) : ''
                 const bytes = Math.floor((base64.length * 3) / 4)
                 const size: { width: number; height: number } | undefined = undefined
-                const shotKey = captureKey(typeof command.args.tabId === 'string' ? command.args.tabId : '', selector)
-                // Always remember the shot, so the next `diff: true` call has a baseline.
+                const shotKey = captureKey(typeof command.args.tabId === 'string' && command.args.tabId !== '' ? command.args.tabId : (activeTabId ?? ''), selector)
                 const wantDiff = command.args.diff === true
                 const compared = await diffAgainstPrevious(shotKey, dataUrl, wantDiff)
                 const diff = wantDiff ? compared : undefined
@@ -1573,7 +1573,23 @@ export function startEngine(): () => void {
             const startedAt = Date.now()
             let detail: Record<string, unknown> = {}
             let outcome: Record<string, unknown> | null = null
+            let lastBeat = startedAt
+            const stillHeld = (): 'human' | 'closed' | null => {
+              if (controlHolder === 'human') return 'human'
+              for (const candidate of sessions.values()) if (candidate.guest === view) return null
+              return 'closed'
+            }
             while (outcome === null) {
+              const aborted = stillHeld()
+              if (aborted !== null) {
+                outcome = { met: false, timedOut: false, aborted, waitedMs: Date.now() - startedAt, detail }
+                break
+              }
+              // The loop owns the command queue while it waits: keep telling the host we are alive.
+              if (Date.now() - lastBeat >= 4000) {
+                lastBeat = Date.now()
+                await report(base as string, {}).catch(() => undefined)
+              }
               try {
                 const raw = await withTimeout(view.executeJavaScript(waitScript(spec), false), 4000, 'E_TIMEOUT')
                 const parsed = typeof raw === 'string' ? JSON.parse(raw) as { status?: string; met?: boolean; detail?: Record<string, unknown>; message?: string } : {}

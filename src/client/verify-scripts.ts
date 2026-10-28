@@ -81,7 +81,7 @@ export function measureScript(selector: string, method: string, property: string
         };
         var l1 = lum(fg), l2 = lum(base);
         var ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
-        value = (Math.round(ratio * 100) / 100).toFixed(2);
+        value = (Math.floor(ratio * 100 + 1e-9) / 100).toFixed(2);
       } else {
         value = cs.getPropertyValue(${prop}) || '';
       }
@@ -498,11 +498,19 @@ export function colorSchemeScript(mode: 'dark' | 'light' | 'auto'): string {
           if (rule.cssRules) walk(rule.cssRules);
         }
       };
-      const sheets = Array.from(document.styleSheets).concat(Array.from(document.adoptedStyleSheets || []));
-      for (const sheet of sheets) { try { walk(sheet.cssRules); } catch (e) { skipped += 1; } }
-      for (const el of Array.from(document.querySelectorAll('link[media], style[media]'))) {
-        const orig = el.getAttribute('media');
-        if (orig && /prefers-color-scheme/i.test(orig)) { el.setAttribute('media', rewrite(orig)); store.attrs.push({ el, orig }); patched += 1; }
+      const roots = [document];
+      for (let index = 0; index < roots.length && roots.length < 500; index += 1) {
+        for (const host of Array.from(roots[index].querySelectorAll('*'))) {
+          if (host.shadowRoot) roots.push(host.shadowRoot);
+        }
+      }
+      for (const root of roots) {
+        const sheets = Array.from(root.styleSheets || []).concat(Array.from(root.adoptedStyleSheets || []));
+        for (const sheet of sheets) { try { walk(sheet.cssRules); } catch (e) { skipped += 1; } }
+        for (const el of Array.from(root.querySelectorAll('link[media], style[media]'))) {
+          const orig = el.getAttribute('media');
+          if (orig && /prefers-color-scheme/i.test(orig)) { el.setAttribute('media', rewrite(orig)); store.attrs.push({ el, orig }); patched += 1; }
+        }
       }
       store.matchMedia = w.matchMedia;
       const original = w.matchMedia.bind(w);

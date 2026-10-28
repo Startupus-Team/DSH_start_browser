@@ -1675,7 +1675,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
     patchedRules: result.patchedRules ?? 0,
     skippedSheets: result.skippedSheets ?? 0,
     approximate: true,
-    hint: 'эмуляция приблизительная: стили чужих доменов без CORS пропущены; режим повторно применяется после навигации и перезагрузки; auto — сброс',
+    hint: 'эмуляция приблизительная: стили чужих доменов без CORS пропущены, shadow DOM обходится, но слушатели matchMedia(...).change не уведомляются — страницы с темой на JS могут потребовать перезагрузки; режим повторно применяется после навигации; auto — сброс',
     commandId: command.id,
   }, 'color_scheme')
 }
@@ -1993,10 +1993,13 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         width: { type: 'number', description: 'Целевая ширина вьюпорта в CSS px (240–2400) — подбирается масштабом' },
         preset: { type: 'string', enum: ['mobile', 'tablet', 'desktop'], description: 'Пресет ширины: mobile 390, tablet 768, desktop 1280 (сброс к 1x)' },
         colorScheme: { type: 'string', enum: ['dark', 'light', 'auto'], description: 'Эмуляция prefers-color-scheme для текущей страницы: dark | light | auto (сброс). Приблизительная, без CDP: переписывает media-запросы доступных стилей и matchMedia; режим запоминается за вкладкой и применяется после навигации' },
-        tabId: tabIdParam,
+        tabId: { type: 'string', description: 'Ключ вкладки из ui_tabs; только для colorScheme (по умолчанию активная)' },
       }, []),
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
+        if (args.tabId !== undefined && args.colorScheme === undefined) {
+          throw new Error('E_NO_EFFECT: tabId у ui_viewport работает только вместе с colorScheme (zoom/width/preset — для активной вкладки)')
+        }
         if (args.colorScheme !== undefined) {
           const scheme = String(args.colorScheme)
           if (!(COLOR_SCHEMES as readonly string[]).includes(scheme)) throw new Error('E_NO_EFFECT: colorScheme должен быть dark, light или auto')
@@ -2153,6 +2156,8 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         const command = enqueue('wait', { ...(tabId === '' ? {} : { tabId }), ...parsed.spec })
         const result = await waitForField('waitResult', since, parsed.spec.timeoutMs + 5000)
         if (result.invalid === true) throw new Error(`E_NO_EFFECT: условие не разобрано — ${String(result.message ?? '')}`)
+        if (result.aborted === 'human') fail('E_HUMAN_CONTROL', 'человек забрал управление во время ожидания', 'нажмите «Вернуть агенту» в панели')
+        if (result.aborted === 'closed') fail('E_GUEST_GONE', 'вкладка закрыта во время ожидания', 'откройте вкладку заново')
         return untrusted({
           met: result.met === true,
           timedOut: result.timedOut === true,
@@ -2167,6 +2172,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       description: 'Выполнить JavaScript на странице (диагностика: значения из DOM, состояние приложения). Код — тело async-функции, результат берите через return; значение сериализуется в JSON (до 8000 символов). Не для действий пользователя — для них ui_act. Не работает, пока управление у человека.',
       parameters: objectSchema({
         code: { type: 'string', description: 'Тело async-функции, до 4000 символов; например: return document.title' },
+        confirmOrigin: { type: 'boolean', description: 'Подтвердить первый скрипт на этом домене (доступ к данным страницы)' },
         tabId: tabIdParam,
       }, ['code']),
       output: output(asText),
@@ -2178,6 +2184,17 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         if (client.control === 'human') {
           fail('E_HUMAN_CONTROL', 'человек забрал управление', 'нажмите «Вернуть агенту» в панели')
         }
+        // The page may hold sessions, tokens and storage: the first script on a new origin needs a deliberate yes.
+        let origin = ''
+        try {
+          origin = new URL(client.url).origin
+        } catch {
+          throw new Error('E_NO_EFFECT: страница не открыта — сначала ui_open')
+        }
+        if (!approvedOrigins.has(origin) && args.confirmOrigin !== true) {
+          throw new Error(`E_APPROVAL_REQUIRED: ui_js на ${origin} получит доступ к данным страницы (storage, cookie без httpOnly) — повторите вызов с confirmOrigin: true`)
+        }
+        approvedOrigins.add(origin)
         const tabId = String(args.tabId ?? '')
         const since = Date.now()
         const command = enqueue('js', { ...(tabId === '' ? {} : { tabId }), code })
@@ -2955,21 +2972,22 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'P2-2: inspect и page_text возвращают результат', pass: false, detail: String(error) })
   }
 
+  const rejects = async (prefix: string, run: () => unknown): Promise<void> => {
+    try {
+      await run()
+    } catch (error) {
+      if (String(error instanceof Error ? error.message : error).startsWith(prefix)) return
+      throw error
+    }
+    throw new Error(`ожидалась ошибка ${prefix}`)
+  }
+
   // ui_wait and colour-scheme emulation round-trip through the renderer.
   try {
     seedTransport()
     commands.length = 0
     const send = async (body: Record<string, unknown>): Promise<void> => {
       await handleRoute(fakeRequest(body, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
-    }
-    const rejects = async (prefix: string, run: () => unknown): Promise<void> => {
-      try {
-        await run()
-      } catch (error) {
-        if (String(error instanceof Error ? error.message : error).startsWith(prefix)) return
-        throw error
-      }
-      throw new Error(`ожидалась ошибка ${prefix}`)
     }
     await rejects('E_NO_EFFECT', () => call('ui_wait', {}))
     await rejects('E_NO_EFFECT', () => call('ui_wait', { state: 'hidden' }))
@@ -3027,29 +3045,25 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
   try {
     seedTransport()
     commands.length = 0
-    const rejects = async (prefix: string, run: () => unknown): Promise<void> => {
-      try {
-        await run()
-      } catch (error) {
-        if (String(error instanceof Error ? error.message : error).startsWith(prefix)) return
-        throw error
-      }
-      throw new Error(`ожидалась ошибка ${prefix}`)
-    }
     const send = async (body: Record<string, unknown>): Promise<void> => {
       await handleRoute(fakeRequest(body, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
     }
     await rejects('E_NO_EFFECT', () => call('ui_js', { code: '   ' }))
     await rejects('E_LIMIT', () => call('ui_js', { code: 'x'.repeat(4001) }))
+    const savedControl = client.control
+    const savedUrl = client.url
+    client.url = 'https://js.test/page'
+    approvedOrigins.delete('https://js.test')
     client.control = 'human'
     try {
       await rejects('E_HUMAN_CONTROL', () => call('ui_js', { code: 'return 1' }))
     } finally {
-      client.control = 'agent'
+      client.control = savedControl
     }
+    await rejects('E_APPROVAL_REQUIRED', () => call('ui_js', { code: 'return 1' }))
     if (commands.length !== 0) throw new Error('отклонённый ui_js поставил команду')
 
-    const running = call('ui_js', { code: 'return document.title', tabId: 'tab-j' }) as Promise<Record<string, unknown>>
+    const running = call('ui_js', { code: 'return document.title', tabId: 'tab-j', confirmOrigin: true }) as Promise<Record<string, unknown>>
     const jsCommand = commands[commands.length - 1]
     if (jsCommand?.kind !== 'js' || jsCommand.args.code !== 'return document.title' || jsCommand.args.tabId !== 'tab-j') {
       throw new Error(`js не поставлен: ${JSON.stringify(jsCommand)}`)
@@ -3062,11 +3076,12 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     const failing = call('ui_js', { code: 'throw 1' }) as Promise<unknown>
     await send({ jsResult: { status: 'ERROR', message: 'boom', at: Date.now() } })
     await rejects('E_JS', () => failing)
+    approvedOrigins.delete('https://js.test')
+    client.url = savedUrl
     commands.length = 0
-    results.push({ name: 'P3-2: ui_js — гейт, лимиты, результат и ошибка', pass: true, detail: 'пусто/4001/человек → отказ; OK → value; ERROR → E_JS' })
+    results.push({ name: 'P3-2: ui_js — гейт, лимиты, результат и ошибка', pass: true, detail: 'пусто/4001/человек/новый origin → отказ; OK → value; ERROR → E_JS' })
   } catch (error) {
     commands.length = 0
-    client.control = null
     results.push({ name: 'P3-2: ui_js — гейт, лимиты, результат и ошибка', pass: false, detail: String(error) })
   }
 

@@ -183,12 +183,14 @@ check('R11: тема — переписывание media-запросов и о
   Object.defineProperty(blocked, 'cssRules', { get() { throw new Error('SecurityError') } })
   const link = { media: 'all and (prefers-color-scheme: dark)', getAttribute(n) { return n === 'media' ? this.media : null }, setAttribute(n, v) { this.media = v }, removeAttribute() { this.media = null } }
   const queries = []
+  const shadowRule = fakeRule('(prefers-color-scheme: dark)')
+  const shadow = { styleSheets: [{ cssRules: [shadowRule] }], adoptedStyleSheets: [], querySelectorAll: () => [] }
   const root = { style: { colorScheme: '' } }
   const context = {
     document: {
       styleSheets: [{ cssRules: [dark, light, plain, group] }, blocked],
       adoptedStyleSheets: [],
-      querySelectorAll: () => [link],
+      querySelectorAll: (selector) => (selector === '*' ? [{ shadowRoot: shadow }] : [link]),
       documentElement: root,
     },
     matchMedia: (query) => { queries.push(query); return { matches: false, media: query } },
@@ -197,7 +199,8 @@ check('R11: тема — переписывание media-запросов и о
   const call = (mode) => JSON.parse(vm.runInNewContext(scripts.colorSchemeScript(mode), context))
 
   const result = call('dark')
-  expect(result.status === 'OK' && result.patchedRules === 4, JSON.stringify(result))
+  expect(result.status === 'OK' && result.patchedRules === 5, JSON.stringify(result))
+  expect(shadowRule.media.mediaText === '(min-width: 0px)', `shadow DOM: ${shadowRule.media.mediaText}`)
   expect(result.skippedSheets === 1, `чужой стиль не пропущен: ${JSON.stringify(result)}`)
   expect(dark.media.mediaText === 'screen and (min-width: 0px)', `dark: ${dark.media.mediaText}`)
   expect(light.media.mediaText === '(max-width: -1px)', `light: ${light.media.mediaText}`)
@@ -210,16 +213,17 @@ check('R11: тема — переписывание media-запросов и о
 
   const flipped = call('light')
   expect(light.media.mediaText === '(min-width: 0px)' && dark.media.mediaText === 'screen and (max-width: -1px)', 'смена dark→light не переписала правила заново')
-  expect(flipped.patchedRules === 4, JSON.stringify(flipped))
+  expect(flipped.patchedRules === 5, JSON.stringify(flipped))
 
   const reset = call('auto')
   expect(reset.patchedRules === 0, JSON.stringify(reset))
   expect(dark.media.mediaText === 'screen and (prefers-color-scheme: dark)', `откат dark: ${dark.media.mediaText}`)
+  expect(shadowRule.media.mediaText === '(prefers-color-scheme: dark)', `откат shadow: ${shadowRule.media.mediaText}`)
   expect(link.media === 'all and (prefers-color-scheme: dark)', `откат link: ${link.media}`)
   expect(root.style.colorScheme === '', `откат root: ${root.style.colorScheme}`)
   context.matchMedia('(prefers-color-scheme: dark)')
   expect(queries[queries.length - 1] === '(prefers-color-scheme: dark)', 'matchMedia не восстановлен')
-  return 'dark/light переписывают 4 запроса (включая вложенный и <link>), auto возвращает оригинал'
+  return 'dark/light переписывают 5 запросов (вложенный, <link>, shadow DOM), auto возвращает оригинал'
 })
 
 const runJs = async (code, max) => {
@@ -321,8 +325,22 @@ check('R15: тема запоминается только для dark/light', (
   return 'auto сбрасывает запомненный режим'
 })
 
+check('R16: контраст не округляется вверх (WCAG)', () => {
+  const lumOf = (g) => { const v = g / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+  const page = node(styleOf('rgb(0, 0, 0)', 'rgb(255, 255, 255)'))
+  let near = 0
+  for (let g = 100; g <= 200; g += 1) {
+    const truth = 1.05 / (lumOf(g) + 0.05)
+    const measured = Number(runMeasure('contrast', node(styleOf(`rgb(${g}, ${g}, ${g})`), page)).value)
+    expect(measured <= truth + 1e-9, `g=${g}: измерено ${measured} > истинного ${truth}`)
+    expect(truth - measured < 0.01 + 1e-9, `g=${g}: усечено слишком сильно (${measured} vs ${truth})`)
+    if (truth >= 4.49 && truth < 4.5) near += 1
+  }
+  return `серые 100..200: значение ≤ истинного и в пределах 0.01 (кандидатов у порога 4.5: ${near})`
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 15/15')
+console.log('RULES OK: 16/16')
