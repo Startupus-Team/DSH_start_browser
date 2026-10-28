@@ -240,6 +240,38 @@ export function apply(ctx: ClientContext): void {
           void note('tab:activated', { label: label.slice(0, 60), tag: node.tagName.toLowerCase() })
           return true
         }
+        // No chip found: the kernel only activates panes it creates itself, so press
+        // its own "+" control and then our guide card — the same two gestures a
+        // person makes. Both run in the app's document, not in the page.
+        const clickPlus = (): boolean => {
+          for (const node of all) {
+            const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${(node.textContent ?? '').trim().slice(0, 24)}`
+            if (/добавить вкладку|add tab|new tab|новая вкладка|open a new tab/i.test(label)) {
+              node.click()
+              void note('tab:plus', { label: label.slice(0, 60) })
+              return true
+            }
+            if (node.tagName === 'BUTTON' && (node.textContent ?? '').trim() === '+') {
+              node.click()
+              void note('tab:plus', { label: 'plus-button' })
+              return true
+            }
+          }
+          return false
+        }
+        if (clickPlus()) {
+          window.setTimeout(() => {
+            for (const node of all) {
+              const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${node.textContent ?? ''}`
+              if (!/Startapus Browser/i.test(label)) continue
+              if (node.closest('.dsh-startapus-browser') !== null) continue
+              node.click()
+              void note('tab:guide', { label: label.slice(0, 60) })
+              return
+            }
+          }, 400)
+          return true
+        }
         void note('dom:tabs', { scanned: all.length, chips: all.filter((node) => /Стартапус|Startapus/i.test(node.textContent ?? '')).length })
         return false
       } catch (error) {
