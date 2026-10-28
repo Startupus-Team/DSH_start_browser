@@ -181,12 +181,12 @@ export function rememberedScheme(mode: unknown): 'dark' | 'light' | null {
 }
 
 /** Operations `ui_act` accepts; shared so the single and batch paths cannot drift. */
-export const ACT_OPS = ['click', 'type', 'scroll', 'press', 'hover', 'select', 'check'] as const
+export const ACT_OPS = ['click', 'type', 'scroll', 'press', 'hover', 'select', 'check', 'drag', 'click_at'] as const
 export type ActOp = typeof ACT_OPS[number]
 
 /** Operations that need a target element (everything except `scroll`). */
 export function actNeedsTarget(op: string): boolean {
-  return op !== 'scroll'
+  return op !== 'scroll' && op !== 'click_at'
 }
 
 export const NAV_ACTIONS = ['back', 'forward', 'reload'] as const

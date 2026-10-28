@@ -24,6 +24,10 @@ await build({
 })
 const rules = await import(pathToFileURL(out).href)
 
+const sizeOut = join(mkdtempSync(join(tmpdir(), 'startapus-size-')), 'size.mjs')
+await build({ entryPoints: ['src/image-size.ts'], bundle: true, format: 'esm', platform: 'node', outfile: sizeOut, logLevel: 'silent' })
+const { imageSize } = await import(pathToFileURL(sizeOut).href)
+
 const scriptsOut = join(mkdtempSync(join(tmpdir(), 'startapus-scripts-')), 'scripts.mjs')
 await build({
   entryPoints: ['src/client/verify-scripts.ts'],
@@ -440,8 +444,134 @@ check('R19: networkScript без хука не падает', () => {
   return 'hooked=false, resource timing сохранён'
 })
 
+check('R20: размер изображения из заголовка PNG/JPEG', () => {
+  const png = Buffer.alloc(33)
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png)
+  png.writeUInt32BE(1322, 16)
+  png.writeUInt32BE(1958, 20)
+  const p = imageSize(png)
+  expect(p?.width === 1322 && p?.height === 1958, JSON.stringify(p))
+  // JPEG: SOI, an APP0 segment to skip, then SOF0 (height 480, width 640).
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x04, 0x00, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x01, 0xe0, 0x02, 0x80, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01])
+  const j = imageSize(jpeg)
+  expect(j?.width === 640 && j?.height === 480, JSON.stringify(j))
+  expect(imageSize(Buffer.from('not an image at all, just text')) === null, 'мусор принят за картинку')
+  expect(imageSize(Buffer.alloc(0)) === null && imageSize(Buffer.from([0x89, 0x50])) === null, 'обрезанные данные')
+  return 'PNG 1322×1958, JPEG 640×480 (пропуск APP0), мусор → null'
+})
+
+const runKey = (value, target = {}) => {
+  const events = []
+  const el = { ...baseEl(), ...target, dispatchEvent(event) { events.push(event); return true } }
+  const context = {
+    document: { querySelector: () => el, querySelectorAll: () => el.__focusables ?? [], activeElement: el, body: el },
+    window: {},
+    KeyboardEvent: class { constructor(type, init) { this.type = type; Object.assign(this, init); this.defaultPrevented = false } },
+    Event: FakeEvent, MouseEvent: FakeEvent, InputEvent: FakeEvent, PointerEvent: FakeEvent,
+  }
+  const result = JSON.parse(vm.runInNewContext(scripts.actScript('press', '#k', value), context))
+  return { result, events, el }
+}
+check('R21: ui_act press — комбинации клавиш', () => {
+  const enter = runKey('')
+  expect(enter.result.key === 'Enter' && enter.events[0].keyCode === 13, JSON.stringify(enter.result))
+  const select = { selected: false, select() { this.selected = true } }
+  const ctrlA = runKey('Ctrl+A', select)
+  expect(ctrlA.events[0].ctrlKey === true && ctrlA.events[0].key === 'A' && ctrlA.events[0].code === 'KeyA', JSON.stringify(ctrlA.events[0]))
+  expect(ctrlA.el.selected === true, 'Ctrl+A не выделил содержимое поля')
+  const cmd = runKey('Cmd+Shift+Z')
+  expect(cmd.events[0].metaKey === true && cmd.events[0].shiftKey === true && cmd.events[0].key === 'Z', JSON.stringify(cmd.events[0]))
+  const arrow = runKey('down')
+  expect(arrow.events[0].key === 'ArrowDown' && arrow.events[0].keyCode === 40, JSON.stringify(arrow.events[0]))
+  const plus = runKey('Ctrl++')
+  expect(plus.result.key === '+' && plus.events[0].ctrlKey === true, JSON.stringify(plus.result))
+  const space = runKey('space')
+  expect(space.events[0].key === ' ' && space.events[0].code === 'Space', JSON.stringify(space.events[0]))
+  const digit = runKey('Alt+3')
+  expect(digit.events[0].altKey === true && digit.events[0].code === 'Digit3', JSON.stringify(digit.events[0]))
+  const tabbable = (name) => ({ name, getAttribute: () => null, disabled: false, getBoundingClientRect: () => ({ width: 5 }), focus() { this.focused = true } })
+  const first = tabbable('a')
+  const second = tabbable('b')
+  const tab = runKey('Tab', { __focusables: [first, second] })
+  expect(tab.events[0].key === 'Tab', 'Tab не отправлен')
+  return 'Enter, Ctrl+A (select), Cmd+Shift+Z, ArrowDown, Ctrl++, Space, Alt+3, Tab'
+})
+
+const runPointer = (op, value, elements) => {
+  const events = []
+  const record = (node) => (event) => { events.push([node.name ?? '?', event.type]); return true }
+  const mk = (name, rect, extra = {}) => ({ name, scrollIntoView() {}, getBoundingClientRect: () => rect, dispatchEvent: null, click() { events.push([name, 'click']) }, tagName: 'DIV', id: '', ...extra })
+  const source = mk('source', { left: 0, top: 0, width: 20, height: 20 }, { draggable: elements.draggable })
+  const target = mk('target', { left: 100, top: 100, width: 20, height: 20 })
+  source.dispatchEvent = record(source)
+  target.dispatchEvent = record(target)
+  const byPoint = (x) => (x >= 90 ? target : source)
+  const context = {
+    document: { querySelector: (selector) => (selector === '#src' ? source : (selector === '#dst' ? target : null)), elementFromPoint: (x, y) => (elements.noHit ? null : byPoint(x)) },
+    window: {},
+    MouseEvent: FakeEvent, PointerEvent: FakeEvent,
+    DragEvent: FakeEvent, DataTransfer: class {},
+  }
+  const result = JSON.parse(vm.runInNewContext(scripts.actScript(op, op === 'click_at' ? '' : '#src', value), context))
+  return { result, events }
+}
+check('R22: ui_act — click_at и drag', () => {
+  const hit = runPointer('click_at', '110,105', {})
+  expect(hit.result.status === 'OK' && hit.events.some(([, type]) => type === 'click'), JSON.stringify(hit))
+  expect(hit.events.some(([, type]) => type === 'mousedown'), 'click_at без mousedown')
+  expect(runPointer('click_at', 'abc', {}).result.message.includes('x,y'), 'мусорные координаты')
+  expect(runPointer('click_at', '5,5', { noHit: true }).result.message.includes('нет элемента'), 'вне окна')
+
+  const toSelector = runPointer('drag', '#dst', {})
+  expect(toSelector.result.status === 'OK' && toSelector.result.to[0] === 110 && toSelector.result.to[1] === 110, JSON.stringify(toSelector.result))
+  const types = toSelector.events.map(([, type]) => type)
+  expect(types[0] === 'pointerdown' || types[0] === 'mousedown', `порядок: ${types}`)
+  expect(types.includes('mousemove') && types.includes('mouseup'), `нет move/up: ${types}`)
+  const byDelta = runPointer('drag', '30,-5', {})
+  expect(byDelta.result.to[0] === 40 && byDelta.result.to[1] === 5, JSON.stringify(byDelta.result))
+  expect(runPointer('drag', '#nope', {}).result.message.includes('не найдена'), 'неизвестная цель')
+  expect(runPointer('drag', '', {}).result.status === 'ERROR', 'drag без цели')
+  const html5 = runPointer('drag', '#dst', { draggable: true }).events.map(([, type]) => type)
+  expect(['dragstart', 'dragenter', 'dragover', 'drop', 'dragend'].every((name) => html5.includes(name)), `HTML5 drag: ${html5}`)
+  return 'click_at, drag по селектору и смещению, HTML5-события для draggable'
+})
+
+check('R23: ui_read_page — корень и фильтр', () => {
+  const nodes = [
+    { tag: 'H1', text: 'Title', attrs: {} },
+    { tag: 'BUTTON', text: 'Go', attrs: {} },
+    { tag: 'A', text: 'Link', attrs: {} },
+  ]
+  const mkNode = (n) => ({ nodeType: 1, tagName: n.tag, textContent: n.text, disabled: false, className: '', id: '', parentElement: null,
+    getAttribute: (name) => n.attrs[name] ?? null, getBoundingClientRect: () => ({ width: 10, height: 10 }) })
+  const make = (rootSelector, filter) => {
+    const els = nodes.map(mkNode)
+    const context = {
+      NodeFilter: { SHOW_ELEMENT: 1 },
+      document: {
+        body: { id: 'body' },
+        querySelector: (selector) => (selector === '#panel' ? { id: 'panel' } : null),
+        createTreeWalker: () => { let index = -1; return { get currentNode() { return { nodeType: 1, tagName: 'DIV', getAttribute: () => null } }, nextNode: () => { index += 1; return els[index] ?? null } } },
+        getElementById: () => null,
+      },
+      window: { getComputedStyle: () => ({ display: 'block', visibility: 'visible' }), CSS: { escape: (x) => x } },
+      location: { href: 'https://x.test/' },
+    }
+    return JSON.parse(vm.runInNewContext(scripts.pageScanScript(50, rootSelector, filter), context))
+  }
+  const all = make('', 'all')
+  expect(all.status === 'OK' && all.items.some((item) => item.role === 'heading'), JSON.stringify(all.items?.map((i) => i.role)))
+  const interactive = make('', 'interactive')
+  expect(interactive.items.every((item) => item.role !== 'heading') && interactive.items.length === 2, JSON.stringify(interactive.items?.map((i) => i.role)))
+  const scoped = make('#panel', 'all')
+  expect(scoped.status === 'OK', JSON.stringify(scoped))
+  const missing = make('#nope', 'all')
+  expect(missing.status === 'ERROR' && missing.message.includes('#nope'), JSON.stringify(missing))
+  return 'heading только при filter=all; root найден/не найден'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 19/19')
+console.log('RULES OK: 23/23')

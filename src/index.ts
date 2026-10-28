@@ -21,6 +21,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renam
 import { homedir, tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { imageSize } from './image-size'
 import { ACT_OPS, COLOR_SCHEMES, NAV_ACTIONS, actNeedsTarget, normalizeWait } from './client/rules'
 
 /** Append one diagnostic line; host registration must be observable without DevTools. */
@@ -80,7 +81,7 @@ interface ClientState {
   pageScan: { url: string; total: number; at: number; items: Array<Record<string, unknown>>; error: string } | null
   newTabResult: { opened: boolean; url: string; error: string; at: number } | null
   panelError: { message: string; at: number } | null
-  closeTabResult: { closed: boolean; at: number } | null
+  closeTabResult: { closed: boolean; via: string; at: number } | null
   guestState: Record<string, unknown> | null
   sessions: Array<{ tabId: string; url: string; title: string }>
   engineActive: string | null
@@ -225,7 +226,25 @@ const tasks = new Map<string, ReviewTask>()
 /** taskId -> the verification currently travelling to the renderer. */
 const pendingVerifications = new Map<string, { commandId: string; at: number }>()
 /** Every client bundle instance that reported in: a stale one must not own page commands. */
-const clientInstances = new Map<string, { tabKey: string; attached: boolean; visible: boolean; lastSeen: number }>()
+const clientInstances = new Map<string, { tabKey: string; attached: boolean; visible: boolean; lastSeen: number; startedAt: number }>()
+/** An instance silent for longer than this is gone (the long poll holds a request for 15 s). */
+const INSTANCE_TTL_MS = 30_000
+
+/**
+ * The one instance that answers commands naming no tab: among live instances that have
+ * a guest and are on screen, the newest bundle. Older bundles (left by rebuilds) keep
+ * polling and would otherwise answer from a page the user is no longer looking at.
+ */
+function ownerInstanceId(now = Date.now()): string | null {
+  let best: { id: string; startedAt: number; lastSeen: number } | null = null
+  for (const [id, row] of clientInstances) {
+    if (now - row.lastSeen > INSTANCE_TTL_MS || !row.attached || row.visible !== true) continue
+    if (best === null || row.startedAt > best.startedAt || (row.startedAt === best.startedAt && row.lastSeen > best.lastSeen)) {
+      best = { id, startedAt: row.startedAt, lastSeen: row.lastSeen }
+    }
+  }
+  return best === null ? null : best.id
+}
 /** tool name -> call timestamps inside the current window. */
 const callLog = new Map<string, number[]>()
 const RATE_WINDOW_MS = 60_000
@@ -278,6 +297,18 @@ function rateLimit(toolName: string, now = Date.now()): void {
 const commands: Command[] = []
 /** Origins the operator explicitly allowed in this session (domain gate). */
 const approvedOrigins = new Set<string>()
+
+/** Remember the configured start page's origin as approved: the agent should not need `confirmOrigin` there. */
+const approveConfiguredOrigin = (startUrl: string): string | null => {
+  try {
+    const origin = new URL(startUrl).origin
+    if (origin === 'null') return null
+    approvedOrigins.add(origin)
+    return origin
+  } catch {
+    return null
+  }
+}
 
 /** Counters summed over every known tab. */
 function totals(): ClientState['counters'] {
@@ -1005,7 +1036,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         panelMounts: client.panelMounts,
         instances: [...clientInstances.entries()]
           .filter(([, row]) => Date.now() - row.lastSeen < 120000)
-          .map(([id, row]) => ({ id, attached: row.attached, visible: row.visible, tabKey: row.tabKey, ageMs: Date.now() - row.lastSeen })),
+          .map(([id, row]) => ({ id, attached: row.attached, visible: row.visible, tabKey: row.tabKey, ageMs: Date.now() - row.lastSeen, owner: id === ownerInstanceId() })),
         revMatch: client.clientRev === '' ? null : client.clientRev === BUILD_REV,
         activeTab: client.engineActive,
         targetTab: client.engineActive,
@@ -1055,7 +1086,9 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       clientKey = key
       const keyState = stateFor(key)
       keyState.lastSeen = Date.now()
-      const pollInstance = clientInstances.get(typeof pollBody.instanceId === 'string' ? pollBody.instanceId : '')
+      const pollInstanceId = typeof pollBody.instanceId === 'string' ? pollBody.instanceId : ''
+      const pollInstance = clientInstances.get(pollInstanceId)
+      if (pollInstance !== undefined) pollInstance.lastSeen = Date.now()
       const pageKind = (kind: string): boolean => !['new_tab', 'close_tab', 'activate_self', 'focus_tab'].includes(kind)
       // Long-poll: hold the request until a command appears (or the deadline),
       // so the agent's action latency does not depend on the client's interval.
@@ -1068,6 +1101,11 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           // A page command belongs to the one instance that both has a guest and is
           // actually on screen; stale instances keep polling but take nothing.
           if (pageKind(row.kind) && pollInstance !== undefined && (!pollInstance.attached || pollInstance.visible !== true)) return false
+          // A command naming no tab means "the page on screen": only the owner instance answers it.
+          if (pageKind(row.kind) && row.args.tabId === undefined) {
+            const owner = ownerInstanceId()
+            if (owner !== null && owner !== pollInstanceId) return false
+          }
           return true
         })
         if (index >= 0) {
@@ -1100,6 +1138,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           attached: body.attached === true,
           visible: body.visible === true,
           lastSeen: Date.now(),
+          startedAt: typeof body.startedAt === 'number' ? body.startedAt : (previous?.startedAt ?? 0),
         })
         if (previous === undefined || previous.attached !== (body.attached === true)) {
           probe('client:instance', { instanceId: reportInstance, attached: body.attached === true, known: clientInstances.size })
@@ -1149,6 +1188,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           attached: body.attached === true,
           visible: body.visible === true,
           lastSeen: Date.now(),
+          startedAt: typeof body.startedAt === 'number' ? body.startedAt : (previous?.startedAt ?? 0),
         })
         if (previous === undefined || previous.attached !== (body.attached === true)) {
           probe('client:instance', { instanceId: body.instanceId, attached: body.attached === true, known: clientInstances.size })
@@ -1209,12 +1249,15 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
             const mime = typeof crop.mime === 'string' ? crop.mime : 'image/png'
             const extension = mime === 'image/jpeg' ? 'jpg' : mime === 'image/webp' ? 'webp' : 'png'
             const file = join(directory, `crop-${Date.now()}.${extension}`)
-            writeFileSync(file, Buffer.from(crop.base64, 'base64'))
+            const image = Buffer.from(crop.base64, 'base64')
+            writeFileSync(file, image)
             pruneCrops(directory)
+            // Real pixel size of the file; the panel only knows the crop rect (0 for a full screen).
+            const measured = imageSize(image)
             client.crop = {
               bytes: crop.bytes,
-              width: typeof crop.width === 'number' ? crop.width : 0,
-              height: typeof crop.height === 'number' ? crop.height : 0,
+              width: measured?.width ?? (typeof crop.width === 'number' ? crop.width : 0),
+              height: measured?.height ?? (typeof crop.height === 'number' ? crop.height : 0),
               path: file,
               at: Date.now(),
               ...(typeof crop.diff === 'object' && crop.diff !== null ? { diff: crop.diff as Record<string, unknown> } : {}),
@@ -1252,8 +1295,8 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         probe('guest:state', state.guestState)
       }
       if (typeof body.closeTabResult === 'object' && body.closeTabResult !== null) {
-        const result = body.closeTabResult as { closed?: boolean }
-        state.closeTabResult = { closed: result.closed === true, at: Date.now() }
+        const result = body.closeTabResult as { closed?: boolean; via?: string }
+        state.closeTabResult = { closed: result.closed === true, via: typeof result.via === 'string' ? result.via : 'none', at: Date.now() }
         probe('closetab:done', state.closeTabResult)
       }
       if (typeof body.captureStage === 'object' && body.captureStage !== null) {
@@ -1676,6 +1719,44 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitRes
   fail('E_TIMEOUT', `${field} не пришёл за ${timeoutMs / 1000} с`, 'панель занята (тяжёлая страница или длинное ожидание) или скрыта — проверьте ui_status (panelStatus, hidden) и повторите')
 }
 
+/** Ask the panel for a fresh page overview and wait for it. */
+async function requestPageScan(options: { limit: number; tabId: string; root: string; filter: 'all' | 'interactive' }): Promise<NonNullable<ClientState['pageScan']>> {
+  const requestedAt = Date.now()
+  const command = enqueue('read_page', {
+    limit: options.limit,
+    ...(options.tabId === '' ? {} : { tabId: options.tabId }),
+    ...(options.root === '' ? {} : { root: options.root }),
+    ...(options.filter === 'all' ? {} : { filter: options.filter }),
+  })
+  // The panel answers asynchronously; waiting here keeps the tool honest —
+  // otherwise the agent gets "queued" and has to guess with ui_find.
+  for (let waited = 0; waited < PANEL_REPLY_MS; waited += 100) {
+    const scan = client.pageScan
+    if (scan !== null && scan.at >= requestedAt) {
+      if (scan.error !== '') throw new Error(`E_SCAN: ${scan.error}`)
+      return scan
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  fail('E_TIMEOUT', `обзор не пришёл за ${PANEL_REPLY_MS / 1000} с (команда ${command.id})`, 'панель занята или скрыта — проверьте ui_status и повторите ui_read_page')
+}
+
+/** Search the last page overview by role, name, tag or selector. */
+function findInScan(args: Record<string, unknown>): ReturnType<typeof untrusted> {
+  const scan = client.pageScan
+  if (scan === null || scan.total === 0) {
+    throw new Error('E_NO_COVERAGE: страница ещё не просканирована — вызовите ui_read_page')
+  }
+  const query = String(args.query ?? '').trim().toLowerCase()
+  if (query === '') throw new Error('E_NO_EFFECT: пустой запрос')
+  const limit = typeof args.limit === 'number' ? Math.min(20, Math.max(1, args.limit)) : 20
+  const rows = scan.items.filter((item) => {
+    const haystack = `${String(item.role ?? '')} ${String(item.name ?? '')} ${String(item.tag ?? '')} ${String(item.selector ?? '')}`.toLowerCase()
+    return haystack.includes(query)
+  }).slice(0, limit)
+  return untrusted({ url: scan.url, scanned: scan.total, matches: rows.length, items: rows })
+}
+
 /** Wait for the screenshot a `ui_screenshot { wait }` call queued; the file is read with `read_image`. */
 async function waitForCapture(commandId: string, since: number): Promise<Record<string, unknown>> {
   for (let waited = 0; waited < 10_000; waited += 100) {
@@ -1772,7 +1853,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
     },
     {
       name: 'ui_close_tab',
-      description: 'Закрыть активную сессию браузера: страница и её гость уничтожаются, lease освобождает ядро. Вкладку DSH закрывает крестик; результат — в ui_status.closeTabResult.',
+      description: 'Закрыть вкладку Startapus (активную или по tabId): через ядро исчезает и запись в полосе, и сессия; если ядро не дало закрыть вкладку, закрывается только сессия (страница и гость), а панель остаётся. Результат — в ui_status.closeTabResult {closed, via: kernel | session}.',
       parameters: objectSchema({ tabId: tabIdParam }, []),
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
@@ -2115,31 +2196,26 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       description: 'Обзор страницы: компактный список интерактивных узлов и заголовков со ссылками ref_N (как read_page в Claude). Возвращает дерево сразу; ref_N принимается в ui_act.',
       parameters: objectSchema({
         limit: { type: 'number', description: 'Сколько узлов вернуть, 10–200 (по умолчанию 120)' },
+        filter: { type: 'string', enum: ['all', 'interactive'], description: 'interactive — только интерактивные узлы, без заголовков' },
+        root: { type: 'string', description: 'CSS-селектор корня обзора: читать только эту ветку страницы' },
         tabId: tabIdParam,
       }, []),
       output: output(asText),
       execute: async (args: Record<string, unknown>) => {
         requireTransport()
         const limit = typeof args.limit === 'number' ? Math.min(200, Math.max(10, args.limit)) : 120
-        const requestedAt = Date.now()
-        const tabId = String(args.tabId ?? '')
-        const command = enqueue('read_page', tabId === '' ? { limit } : { limit, tabId })
-        // The panel answers asynchronously; waiting here keeps the tool honest —
-        // otherwise the agent gets "queued" and has to guess with ui_find.
-        for (let waited = 0; waited < PANEL_REPLY_MS / 100; waited += 1) {
-          const scan = client.pageScan
-          if (scan !== null && scan.at >= requestedAt) {
-            if (scan.error !== '') throw new Error(`E_SCAN: ${scan.error}`)
-            return untrusted({
-              url: scan.url,
-              total: scan.total,
-              items: scan.items.slice(0, limit),
-              hint: 'передавайте ref из items в ui_act вместо CSS-селектора',
-            }, 'read_page')
-          }
-          await new Promise((resolve) => setTimeout(resolve, 100))
-        }
-        fail('E_TIMEOUT', `обзор не пришёл за ${PANEL_REPLY_MS / 1000} с (команда ${command.id})`, 'панель занята или скрыта — проверьте ui_status и повторите ui_read_page')
+        const scan = await requestPageScan({
+          limit,
+          tabId: String(args.tabId ?? ''),
+          root: typeof args.root === 'string' ? args.root.trim() : '',
+          filter: args.filter === 'interactive' ? 'interactive' : 'all',
+        })
+        return untrusted({
+          url: scan.url,
+          total: scan.total,
+          items: scan.items.slice(0, limit),
+          hint: 'передавайте ref из items в ui_act вместо CSS-селектора',
+        }, 'read_page')
       },
     },
     {
@@ -2148,21 +2224,16 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       parameters: objectSchema({
         query: { type: 'string', description: 'Подстрока для поиска (без учёта регистра)' },
         limit: { type: 'number', description: 'Сколько вернуть, до 20' },
+        refresh: { type: 'boolean', description: 'Сначала заново прочитать страницу (иначе поиск идёт по последнему обзору)' },
+        tabId: tabIdParam,
       }, ['query']),
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
-        const scan = client.pageScan
-        if (scan === null || scan.total === 0) {
-          throw new Error('E_NO_COVERAGE: страница ещё не просканирована — вызовите ui_read_page')
+        if (args.refresh === true) {
+          requireTransport()
+          return requestPageScan({ limit: 200, tabId: String(args.tabId ?? ''), root: '', filter: 'all' }).then(() => findInScan(args))
         }
-        const query = String(args.query ?? '').trim().toLowerCase()
-        if (query === '') throw new Error('E_NO_EFFECT: пустой запрос')
-        const limit = typeof args.limit === 'number' ? Math.min(20, Math.max(1, args.limit)) : 20
-        const rows = scan.items.filter((item) => {
-          const haystack = `${String(item.role ?? '')} ${String(item.name ?? '')} ${String(item.tag ?? '')} ${String(item.selector ?? '')}`.toLowerCase()
-          return haystack.includes(query)
-        }).slice(0, limit)
-        return untrusted({ url: scan.url, scanned: scan.total, matches: rows.length, items: rows })
+        return findInScan(args)
       },
     },
     {
@@ -2714,6 +2785,8 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
   /** Treat the default tab as a freshly seen, connected panel. */
   const seedTransport = (): void => {
     clientKey = 'startapus-browser'
+    // Tests must not inherit instances registered by earlier ones: the owner rule would filter their polls.
+    clientInstances.clear()
     const seeded = stateFor('startapus-browser')
     seeded.lastSeen = Date.now()
     seeded.stage = 'ready'
@@ -3252,6 +3325,121 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'P3-4: вердикты contrast / no-hscroll / in-viewport', pass: false, detail: String(error) })
   }
 
+  // INST-2: with several live instances only the newest answers commands that name no tab.
+  try {
+    seedTransport()
+    commands.length = 0
+    clientInstances.clear()
+    const event = async (body: Record<string, unknown>): Promise<void> => {
+      await handleRoute(fakeRequest(body, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    }
+    await event({ instanceId: 'inst-old', attached: true, visible: true, startedAt: 1000 })
+    await event({ instanceId: 'inst-new', attached: true, visible: true, startedAt: 2000 })
+    const pollAs = async (instanceId: string): Promise<{ command?: { kind?: string; id?: string } }> => {
+      const reply = fakeResponse()
+      await handleRoute(fakeRequest({ tabKey: 'startapus-browser', instanceId }, 'POST', '/startapus-browser/client/poll'), reply.res)
+      return reply.read().body as { command?: { kind?: string; id?: string } }
+    }
+    enqueue('read_page', { limit: 10 })
+    if ((await pollAs('inst-old')).command !== undefined) throw new Error('старый экземпляр забрал команду без tabId')
+    if ((await pollAs('inst-new')).command?.kind !== 'read_page') throw new Error('новый экземпляр не получил команду без tabId')
+    enqueue('read_page', { limit: 10, tabId: 'tab-a' })
+    if ((await pollAs('inst-old')).command?.kind !== 'read_page') throw new Error('команда с tabId должна уходить любому живому экземпляру')
+    // The owner going silent hands ownership to the next live instance.
+    const old = clientInstances.get('inst-new')
+    if (old !== undefined) old.lastSeen = Date.now() - INSTANCE_TTL_MS - 1000
+    enqueue('read_page', { limit: 10 })
+    if ((await pollAs('inst-old')).command?.kind !== 'read_page') throw new Error('после тишины владельца команда должна уйти старому')
+    clientInstances.clear()
+    commands.length = 0
+    results.push({ name: 'INST-2: команда без tabId — только владельцу', pass: true, detail: 'новый получает, старый нет; с tabId — любой; тишина владельца → следующий' })
+  } catch (error) {
+    clientInstances.clear()
+    commands.length = 0
+    results.push({ name: 'INST-2: команда без tabId — только владельцу', pass: false, detail: String(error) })
+  }
+
+  // closeTabResult keeps how the tab was closed (kernel strip entry vs session only).
+  try {
+    seedTransport()
+    await handleRoute(fakeRequest({ closeTabResult: { closed: true, via: 'kernel' } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const viaKernel = unwrap<{ closeTabResult?: { closed?: boolean; via?: string } }>(call('ui_status', {})).closeTabResult
+    await handleRoute(fakeRequest({ closeTabResult: { closed: true } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const viaDefault = unwrap<{ closeTabResult?: { via?: string } }>(call('ui_status', {})).closeTabResult
+    const queued = call('ui_close_tab', { tabId: 'tab-c' }) as { queued?: boolean }
+    const closeCommand = commands[commands.length - 1]
+    commands.length = 0
+    if (viaKernel?.via !== 'kernel' || viaKernel.closed !== true) throw new Error(`via kernel: ${JSON.stringify(viaKernel)}`)
+    if (viaDefault?.via !== 'none') throw new Error(`via по умолчанию: ${JSON.stringify(viaDefault)}`)
+    if (queued.queued !== true || closeCommand?.kind !== 'close_tab' || closeCommand.args.tabId !== 'tab-c') throw new Error(`close_tab: ${JSON.stringify(closeCommand)}`)
+    results.push({ name: 'CLOSE-1: closeTabResult помнит способ закрытия', pass: true, detail: 'via=kernel / none; tabId доходит до команды' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'CLOSE-1: closeTabResult помнит способ закрытия', pass: false, detail: String(error) })
+  }
+
+  // ui_js on the configured start page needs no confirmation; a screenshot reports real pixel size.
+  try {
+    approvedOrigins.delete('https://start.test')
+    if (approveConfiguredOrigin('https://start.test/welcome?x=1') !== 'https://start.test' || !approvedOrigins.has('https://start.test')) {
+      throw new Error('origin стартовой страницы не одобрен')
+    }
+    approvedOrigins.delete('https://start.test')
+    if (approveConfiguredOrigin('not a url') !== null || approveConfiguredOrigin('data:text/html,x') !== null) throw new Error('мусорный startUrl одобрен')
+    seedTransport()
+    commands.length = 0
+    const png = Buffer.alloc(33)
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(png)
+    png.writeUInt32BE(13, 8)
+    png.write('IHDR', 12)
+    png.writeUInt32BE(1322, 16)
+    png.writeUInt32BE(1958, 20)
+    const waiting = call('ui_screenshot', { wait: true }) as Promise<Record<string, unknown>>
+    await handleRoute(fakeRequest({ crop: { bytes: png.length, width: 0, height: 0, base64: png.toString('base64'), mime: 'image/png' } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const shot = await waiting
+    if (typeof shot.path === 'string') rmSync(shot.path, { force: true })
+    if (shot.width !== 1322 || shot.height !== 1958) throw new Error(`размер снимка: ${shot.width}×${shot.height}`)
+    commands.length = 0
+    results.push({ name: 'P3-7: startUrl одобрен, размер снимка из файла', pass: true, detail: 'origin старта в approvedOrigins; PNG 1322×1958' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P3-7: startUrl одобрен, размер снимка из файла', pass: false, detail: String(error) })
+  }
+
+  // ui_read_page root/filter and ui_find refresh reach the renderer; new act ops are accepted.
+  try {
+    seedTransport()
+    commands.length = 0
+    const reading = call('ui_read_page', { root: '#panel', filter: 'interactive', limit: 50, tabId: 'tab-r' }) as Promise<Record<string, unknown>>
+    const readCommand = commands[commands.length - 1]
+    if (readCommand?.kind !== 'read_page' || readCommand.args.root !== '#panel' || readCommand.args.filter !== 'interactive' || readCommand.args.tabId !== 'tab-r') {
+      throw new Error(`read_page без root/filter: ${JSON.stringify(readCommand)}`)
+    }
+    await handleRoute(fakeRequest({ pageScan: { url: 'https://x.test/', total: 1, items: [{ ref: 'ref_1', role: 'button', tag: 'button', name: 'Save', selector: 'button.save', visible: true }] } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const page = unwrap<{ total?: number }>(await reading)
+    if (page.total !== 1) throw new Error(`read_page вернул ${JSON.stringify(page)}`)
+    commands.length = 0
+
+    const finding = call('ui_find', { query: 'save', refresh: true }) as Promise<Record<string, unknown>>
+    const refreshCommand = commands[commands.length - 1]
+    if (refreshCommand?.kind !== 'read_page' || refreshCommand.args.root !== undefined) throw new Error(`refresh не запросил обзор: ${JSON.stringify(refreshCommand)}`)
+    await handleRoute(fakeRequest({ pageScan: { url: 'https://x.test/', total: 1, items: [{ ref: 'ref_1', role: 'button', tag: 'button', name: 'Save', selector: 'button.save', visible: true }] } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const found = unwrap<{ matches?: number }>(await finding)
+    if (found.matches !== 1) throw new Error(`find refresh вернул ${JSON.stringify(found)}`)
+    commands.length = 0
+
+    for (const [op, selector, value] of [['drag', '#a', '#b'], ['click_at', '', '10,20'], ['press', '#k', 'Ctrl+A']] as const) {
+      const queued = call('ui_act', { op, ...(selector === '' ? {} : { selector }), value }) as { queued?: boolean }
+      if (queued.queued !== true || commands[commands.length - 1]?.args.op !== op) throw new Error(`${op} не поставлен`)
+      commands.length = 0
+    }
+    await rejects('E_NO_EFFECT', () => call('ui_act', { op: 'drag', value: '#b' }))
+    results.push({ name: 'P3-8: read_page root/filter, find refresh, drag/click_at', pass: true, detail: 'аргументы доходят до панели; click_at без селектора допустим' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P3-8: read_page root/filter, find refresh, drag/click_at', pass: false, detail: String(error) })
+  }
+
   // ui_navigate and the extended ui_act operations.
   try {
     seedTransport()
@@ -3719,6 +3907,7 @@ export function apply(ctx: Context, config: Config = {}): void {
   const arbitrary = config.allowArbitrarySites !== false
 
   probe('apply:start', { startUrl, arbitrary })
+  approveConfiguredOrigin(startUrl)
   try {
     loadTasks()
   } catch {

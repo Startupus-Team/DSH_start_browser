@@ -111,6 +111,14 @@ let controlHolder: 'agent' | 'human' | null = null
 let agentActiveUntil = 0
 const AGENT_ACTIVE_MS = 10000
 let closeRequested: () => boolean = () => false
+/** Per-tab "close the kernel tab" callbacks, registered by each mounted panel. */
+const tabClosers = new Map<string, () => boolean>()
+
+/** A panel offers the kernel's closeTab for its own tab; `ui_close_tab` uses it so the strip entry disappears too. */
+export function setTabCloser(tabKey: string, closer: (() => boolean) | null): void {
+  if (closer === null) tabClosers.delete(tabKey)
+  else tabClosers.set(tabKey, closer)
+}
 let pickRequested: () => void = () => undefined
 /** Opening a tab through the pane's own bound actions (falls back to the controller). */
 let openTabRequested: ((url: string) => boolean) | null = null
@@ -1260,11 +1268,13 @@ export function startEngine(): () => void {
         } else if (command.kind === 'read_page') {
           const view = await readyView(command)
           const limit = Math.min(200, Math.max(10, Number(command.args.limit ?? 120)))
+          const scanRoot = typeof command.args.root === 'string' ? command.args.root : ''
+          const scanFilter = command.args.filter === 'interactive' ? 'interactive' : 'all'
           if (view === null || view.executeJavaScript === undefined) {
             await report(base as string, { pageScan: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
           } else {
             try {
-              const raw = await withTimeout(view.executeJavaScript(pageScanScript(limit), false), 8000, 'E_TIMEOUT')
+              const raw = await withTimeout(view.executeJavaScript(pageScanScript(limit, scanRoot, scanFilter), false), 8000, 'E_TIMEOUT')
               const parsed = typeof raw === 'string' ? JSON.parse(raw) as { status?: string; total?: number; items?: unknown[]; url?: string; message?: string } : {}
               if (parsed.status === 'OK') {
                 await report(base as string, { pageScan: { url: parsed.url ?? '', total: parsed.total ?? 0, items: parsed.items ?? [] } })
@@ -1393,10 +1403,28 @@ export function startEngine(): () => void {
           await report(base as string, { focusTabResult: { tabId: target, focused } })
           setStatus(focused ? `вкладка ${target} активирована` : `не удалось активировать ${target}`)
         } else if (command.kind === 'close_tab') {
-          const target = activeTabId
-          const closed = target === null ? false : closeSession(target) === true
-          await report(base as string, { closeTabResult: { closed } })
-          if (!closed) setStatus('закрыть вкладку не удалось: нет доступа к actions.closeTab')
+          const requested = typeof command.args.tabId === 'string' && command.args.tabId !== '' ? command.args.tabId : activeTabId
+          let via: 'kernel' | 'session' | 'none' = 'none'
+          let closed = false
+          if (requested !== null) {
+            // Prefer the kernel's own close: it removes the entry from the strip and its close
+            // handler disposes the session (the kernel owns the lease). Closing only the session
+            // left an empty pane behind.
+            const kernelClosed = tabClosers.get(requested)?.() === true
+            if (kernelClosed) {
+              await new Promise((resolve) => setTimeout(resolve, 600))
+              if (sessions.has(requested)) closeSession(requested)
+              via = 'kernel'
+              closed = true
+            } else {
+              closed = closeSession(requested) === true
+              via = closed ? 'session' : 'none'
+            }
+          }
+          await report(base as string, { closeTabResult: { closed, via } })
+          setStatus(closed
+            ? (via === 'kernel' ? 'вкладка закрыта вместе с панелью' : 'сессия закрыта, панель осталась: ядро не дало закрыть вкладку')
+            : 'закрыть вкладку не удалось: нет такой сессии')
         } else if (command.kind === 'new_tab') {
           const target = String(command.args.url ?? '')
           // Prefer the pane's bound actions: a controller-level open can create a

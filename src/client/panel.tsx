@@ -42,7 +42,7 @@ import {
   subscribeEngine,
 } from './engine'
 import { normalizeAddress } from './rules'
-import { activateOwnTab } from './engine'
+import { activateOwnTab, setTabCloser } from './engine'
 import { focusStartapusTab } from './tabs'
 import { PICKER_POLL, PICKER_SCRIPT } from './picker-source'
 
@@ -208,6 +208,11 @@ function PanelChrome(props: PanelProps): React.ReactNode {
       }
     })()
   }, [props])
+
+  useEffect(() => {
+    setTabCloser(tabKey, () => props.onClose?.() === true)
+    return () => setTabCloser(tabKey, null)
+  }, [tabKey, props])
 
   useEffect(() => {
     setViewHooks({

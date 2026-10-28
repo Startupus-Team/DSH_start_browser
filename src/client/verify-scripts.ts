@@ -250,20 +250,113 @@ export function actScript(op: string, selector: string, value: string): string {
         return JSON.stringify({ status: 'OK', op: op, length: value.length });
       }
       if (op === 'press') {
-        // Real key events, so React handlers that submit on Enter fire.
+        // Real key events (with modifiers), so React handlers that submit on Enter fire.
         var target = el !== null ? el : (document.activeElement || document.body);
         target.focus();
-        var key = value === '' ? 'Enter' : value;
-        var code = key === 'Enter' ? 13 : (key === 'Tab' ? 9 : (key === 'Escape' ? 27 : 0));
-        var down = new KeyboardEvent('keydown', { key: key, code: key, keyCode: code, which: code, bubbles: true, cancelable: true });
-        var up = new KeyboardEvent('keyup', { key: key, code: key, keyCode: code, which: code, bubbles: true, cancelable: true });
+        var raw = value === '' ? 'Enter' : value;
+        var mods = [];
+        while (raw.length > 1 && raw.indexOf('+') > 0) {
+          var cut = raw.indexOf('+');
+          mods.push(raw.slice(0, cut).toLowerCase());
+          raw = raw.slice(cut + 1);
+        }
+        var named = { enter: 'Enter', 'return': 'Enter', tab: 'Tab', escape: 'Escape', esc: 'Escape', space: ' ', backspace: 'Backspace', 'delete': 'Delete', del: 'Delete',
+          arrowup: 'ArrowUp', up: 'ArrowUp', arrowdown: 'ArrowDown', down: 'ArrowDown', arrowleft: 'ArrowLeft', left: 'ArrowLeft', arrowright: 'ArrowRight', right: 'ArrowRight',
+          home: 'Home', end: 'End', pageup: 'PageUp', pagedown: 'PageDown' };
+        var codes = { Enter: 13, Tab: 9, Escape: 27, ' ': 32, Backspace: 8, Delete: 46, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Home: 36, End: 35, PageUp: 33, PageDown: 34 };
+        var key = named[raw.toLowerCase()] !== undefined ? named[raw.toLowerCase()] : raw;
+        var upper = key.length === 1 ? key.toUpperCase() : key;
+        var code = codes[key] !== undefined ? codes[key] : (upper >= 'A' && upper <= 'Z' && key.length === 1 ? upper.charCodeAt(0) : (key >= '0' && key <= '9' && key.length === 1 ? key.charCodeAt(0) : 0));
+        var domCode = key === ' ' ? 'Space' : (key.length === 1 && upper >= 'A' && upper <= 'Z' ? 'Key' + upper : (key.length === 1 && key >= '0' && key <= '9' ? 'Digit' + key : key));
+        var flags = {
+          ctrlKey: mods.indexOf('ctrl') >= 0 || mods.indexOf('control') >= 0,
+          metaKey: mods.indexOf('meta') >= 0 || mods.indexOf('cmd') >= 0 || mods.indexOf('command') >= 0,
+          shiftKey: mods.indexOf('shift') >= 0,
+          altKey: mods.indexOf('alt') >= 0 || mods.indexOf('option') >= 0
+        };
+        var keyInit = { key: key, code: domCode, keyCode: code, which: code, bubbles: true, cancelable: true, ctrlKey: flags.ctrlKey, metaKey: flags.metaKey, shiftKey: flags.shiftKey, altKey: flags.altKey };
+        var down = new KeyboardEvent('keydown', keyInit);
+        var up = new KeyboardEvent('keyup', keyInit);
         target.dispatchEvent(down);
         target.dispatchEvent(up);
-        if (key === 'Enter') {
-          var form = target.form || (target.closest && target.closest('form'));
-          if (form !== null && form !== undefined) form.requestSubmit();
+        var plain = !flags.ctrlKey && !flags.metaKey && !flags.altKey;
+        if (!down.defaultPrevented) {
+          if (key === 'Enter' && plain) {
+            var form = target.form || (target.closest && target.closest('form'));
+            if (form !== null && form !== undefined) form.requestSubmit();
+          } else if ((flags.ctrlKey || flags.metaKey) && key.toLowerCase() === 'a' && typeof target.select === 'function') {
+            target.select();
+          } else if (key === 'Tab' && plain) {
+            var focusables = Array.prototype.filter.call(document.querySelectorAll('a[href], button, input, select, textarea, [tabindex]'), function (n) {
+              return n.getAttribute('tabindex') !== '-1' && !n.disabled && n.getBoundingClientRect().width > 0;
+            });
+            var at = focusables.indexOf(target);
+            var next = focusables[(at + (flags.shiftKey ? -1 : 1) + focusables.length) % Math.max(1, focusables.length)];
+            if (next) next.focus();
+          }
         }
-        return JSON.stringify({ status: 'OK', op: op, key: key });
+        return JSON.stringify({ status: 'OK', op: op, key: key, modifiers: mods });
+      }
+      if (op === 'click_at') {
+        var pointParts = value.split(',');
+        var px = Number.parseFloat(pointParts[0]);
+        var py = Number.parseFloat(pointParts[1]);
+        if (!Number.isFinite(px) || !Number.isFinite(py)) return JSON.stringify({ status: 'ERROR', message: 'value должен быть «x,y» в координатах окна просмотра' });
+        var hit = document.elementFromPoint(px, py);
+        if (hit === null) return JSON.stringify({ status: 'ERROR', message: 'в точке ' + px + ',' + py + ' нет элемента (вне окна просмотра?)' });
+        var pointInit = { bubbles: true, cancelable: true, clientX: px, clientY: py, view: window, button: 0 };
+        if (typeof PointerEvent !== 'undefined') hit.dispatchEvent(new PointerEvent('pointerdown', pointInit));
+        hit.dispatchEvent(new MouseEvent('mousedown', pointInit));
+        if (typeof PointerEvent !== 'undefined') hit.dispatchEvent(new PointerEvent('pointerup', pointInit));
+        hit.dispatchEvent(new MouseEvent('mouseup', pointInit));
+        hit.click();
+        return JSON.stringify({ status: 'OK', op: op, tag: hit.tagName.toLowerCase(), id: hit.id || '' });
+      }
+      if (op === 'drag') {
+        if (el === null) return JSON.stringify({ status: 'MISSING' });
+        el.scrollIntoView({ block: 'center' });
+        var from = el.getBoundingClientRect();
+        var sx = Math.round(from.left + from.width / 2);
+        var sy = Math.round(from.top + from.height / 2);
+        var ex = sx;
+        var ey = sy;
+        var destination = null;
+        if (value.indexOf(',') >= 0 && !Number.isNaN(Number.parseFloat(value.split(',')[0]))) {
+          ex = sx + Number.parseFloat(value.split(',')[0]);
+          ey = sy + Number.parseFloat(value.split(',')[1]);
+        } else if (value !== '') {
+          destination = document.querySelector(value);
+          if (destination === null) return JSON.stringify({ status: 'ERROR', message: 'цель перетаскивания не найдена: ' + value });
+          var to = destination.getBoundingClientRect();
+          ex = Math.round(to.left + to.width / 2);
+          ey = Math.round(to.top + to.height / 2);
+        } else {
+          return JSON.stringify({ status: 'ERROR', message: 'value: селектор цели или смещение «dx,dy»' });
+        }
+        var mouse = function (type, node, x, y, buttons) {
+          var init = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window, button: 0, buttons: buttons };
+          if (typeof PointerEvent !== 'undefined' && type.indexOf('mouse') === 0) node.dispatchEvent(new PointerEvent(type.replace('mouse', 'pointer'), init));
+          node.dispatchEvent(new MouseEvent(type, init));
+        };
+        mouse('mousedown', el, sx, sy, 1);
+        var steps = 6;
+        for (var step = 1; step <= steps; step += 1) {
+          var mx = Math.round(sx + (ex - sx) * step / steps);
+          var my = Math.round(sy + (ey - sy) * step / steps);
+          mouse('mousemove', document.elementFromPoint(mx, my) || el, mx, my, 1);
+        }
+        var drop = destination || document.elementFromPoint(ex, ey) || el;
+        mouse('mouseup', drop, ex, ey, 0);
+        if (el.draggable === true && typeof DragEvent !== 'undefined' && typeof DataTransfer !== 'undefined') {
+          var transfer = new DataTransfer();
+          var dragInit = function (x, y) { return { bubbles: true, cancelable: true, clientX: x, clientY: y, dataTransfer: transfer }; };
+          el.dispatchEvent(new DragEvent('dragstart', dragInit(sx, sy)));
+          drop.dispatchEvent(new DragEvent('dragenter', dragInit(ex, ey)));
+          drop.dispatchEvent(new DragEvent('dragover', dragInit(ex, ey)));
+          drop.dispatchEvent(new DragEvent('drop', dragInit(ex, ey)));
+          el.dispatchEvent(new DragEvent('dragend', dragInit(ex, ey)));
+        }
+        return JSON.stringify({ status: 'OK', op: op, from: [sx, sy], to: [ex, ey], note: 'синтетические события: нативный drag-and-drop ОС не выполняется' });
       }
       if (op === 'hover') {
         if (el === null) return JSON.stringify({ status: 'MISSING' });
@@ -340,10 +433,14 @@ export function actScript(op: string, selector: string, value: string): string {
  * `ref_N` handles — the same idea as Claude's `read_page`, built from the DOM
  * because CDP Accessibility is not available to a sandboxed plugin.
  */
-export function pageScanScript(limit: number): string {
+export function pageScanScript(limit: number, root = '', filter: 'all' | 'interactive' = 'all'): string {
   return `(() => {
     try {
       var MAX = ${limit};
+      var ROOT = ${JSON.stringify(root)};
+      var ONLY_INTERACTIVE = ${filter === 'interactive'};
+      var scope = ROOT === '' ? document.body : document.querySelector(ROOT);
+      if (!scope) return JSON.stringify({ status: 'ERROR', message: 'корень обзора не найден: ' + ROOT });
       var items = [];
       var seen = 0;
       function path(node) {
@@ -379,14 +476,14 @@ export function pageScanScript(limit: number): string {
         if (alt) return String(alt).slice(0, 120);
         return (node.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 120);
       }
-      var walk = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT);
+      var walk = document.createTreeWalker(scope, NodeFilter.SHOW_ELEMENT);
       var node = walk.currentNode;
       while (node && items.length < MAX) {
         var tag = node.tagName.toLowerCase();
         var role = node.getAttribute('role') || (tag === 'a' ? 'link' : tag === 'button' ? 'button' : tag === 'input' || tag === 'textarea' ? 'textbox' : tag === 'select' ? 'combobox' : '');
         var interactive = ['a','button','input','textarea','select','summary','details','label'].indexOf(tag) >= 0 || role !== '';
         var heading = /^h[1-6]$/.test(tag);
-        if (interactive || heading) {
+        if (interactive || (heading && !ONLY_INTERACTIVE)) {
           var rect = node.getBoundingClientRect();
           var style = window.getComputedStyle(node);
           var visible = style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
