@@ -63,6 +63,7 @@ interface PanelProps {
   params?: { url?: string }
   onClose?: () => boolean
   onOpenTab?: (url: string) => boolean
+  onFocusTab?: (tabId: string) => boolean
   onPick?: (pick: ElementPick) => unknown
 }
 
@@ -162,6 +163,7 @@ function PanelChrome(props: PanelProps): React.ReactNode {
       pickRequested: () => togglePick(),
       closeRequested: () => props.onClose?.() === true,
       openTabRequested: (url) => props.onOpenTab?.(url) === true,
+      focusTabRequested: (tabId) => props.onFocusTab?.(tabId) === true,
     })
   }, [togglePick, props])
 

@@ -98,6 +98,8 @@ let closeRequested: () => boolean = () => false
 let pickRequested: () => void = () => undefined
 /** Opening a tab through the pane's own bound actions (falls back to the controller). */
 let openTabRequested: ((url: string) => boolean) | null = null
+/** Front a tab through the pane's bound actions. */
+let focusTabRequested: ((tabId: string) => boolean) | null = null
 /** Last address-bar attempt, reported so a silent failure becomes visible. */
 let lastNavAttempt: { url: string; ok: boolean; reason: string; hasGuest: boolean; hasLoadURL: boolean; at: number } | null = null
 const listeners = new Set<() => void>()
@@ -200,6 +202,13 @@ export function openInSession(tabId: string, rawUrl: string): { ok: boolean; rea
   }
 }
 
+/** Open one more Startapus tab: bound actions first, controller as fallback. */
+export function requestOpenTab(url = ''): { ok: boolean; via: 'pane' | 'controller'; error: string } {
+  if (openTabRequested !== null && openTabRequested(url)) return { ok: true, via: 'pane', error: '' }
+  const fallback = openStartapusTab('startapus-browser', url === '' ? {} : { url })
+  return { ok: fallback.opened, via: 'controller', error: fallback.error }
+}
+
 /** The human takes the page back: agent mutations are refused from now on. */
 export function takeHumanControl(): void {
   controlHolder = 'human'
@@ -253,10 +262,12 @@ export function setViewHooks(hooks: {
   closeRequested?: () => boolean
   pickRequested?: () => void
   openTabRequested?: (url: string) => boolean
+  focusTabRequested?: (tabId: string) => boolean
 }): void {
   if (hooks.closeRequested !== undefined) closeRequested = hooks.closeRequested
   if (hooks.pickRequested !== undefined) pickRequested = hooks.pickRequested
   if (hooks.openTabRequested !== undefined) openTabRequested = hooks.openTabRequested
+  if (hooks.focusTabRequested !== undefined) focusTabRequested = hooks.focusTabRequested
 }
 
 function memoryOf(session: Session | undefined): { url: string; scrollY: number; restoreScroll: boolean } {
@@ -744,6 +755,11 @@ export function startEngine(): void {
               await report(base as string, { guestState: { error: String(error), getURL: String(view.getURL?.() ?? '') } })
             }
           }
+        } else if (command.kind === 'focus_tab') {
+          const target = String(command.args.tabId ?? '')
+          const focused = focusTabRequested === null ? false : focusTabRequested(target)
+          await report(base as string, { focusTabResult: { tabId: target, focused } })
+          setStatus(focused ? `вкладка ${target} активирована` : `не удалось активировать ${target}`)
         } else if (command.kind === 'close_tab') {
           const target = activeTabId
           const closed = target === null ? false : closeSession(target) === true

@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { StartapusBrowserPanel } from './panel.tsx'
 import { elementSource, insertElementRef, type ElementPick } from './element-refs.ts'
-import { startEngine } from './engine'
+import { requestOpenTab, startEngine } from './engine'
 import { markTabClosing, registerTabsCloseHandler } from './tabs'
 import { setTabsApi } from './tabs'
 import { useTabTitle } from './tab-titles'
@@ -122,6 +122,46 @@ export function apply(ctx: ClientContext): void {
     // optional
   }
 
+  // Cmd+B (Ctrl+B on other platforms) opens the browser tab. The catalog row
+  // makes the sequence discoverable; the listener is the actual handler.
+  try {
+    const shortcuts = ctx.get('shortcuts') as {
+      registerFixed?: (command: {
+        id: string
+        label: () => string
+        keys: string[]
+        bindings: Array<{ code: string; modifiers: string[] }>
+        group: string
+      }) => () => void
+    } | undefined
+    shortcuts?.registerFixed?.({
+      id: 'startapus-browser.open',
+      label: () => 'Открыть Startapus Browser',
+      keys: ['Cmd+B'],
+      bindings: [{ code: 'KeyB', modifiers: ['Meta'] }],
+      group: 'application',
+    })
+  } catch {
+    // catalog is optional
+  }
+
+  try {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const modifier = event.metaKey || event.ctrlKey
+      if (!modifier || event.altKey || event.shiftKey) return
+      if (event.key.toLowerCase() !== 'b') return
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName?.toLowerCase() ?? ''
+      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable === true) return
+      event.preventDefault()
+      requestOpenTab()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    ctx.effect(() => () => window.removeEventListener('keydown', onKeyDown, true), 'startapus-browser: shortcut')
+  } catch {
+    // the shortcut must never break activation
+  }
+
   try {
     startEngine()
   } catch {
@@ -203,6 +243,7 @@ export function apply(ctx: ClientContext): void {
         actions?: {
           closeTab?: (sessionId: string, tabId: string) => void
           openTab?: (kind: string, options?: { params?: Record<string, unknown>; revealIfOpened?: boolean }) => unknown
+          focusTab?: (sessionId: string, tabId: string) => unknown
         }
       }).actions
       const sessionId = props?.sessionId
@@ -224,12 +265,22 @@ export function apply(ctx: ClientContext): void {
           return false
         }
       }
+      const onFocusTab = (target: string): boolean => {
+        try {
+          if (actions?.focusTab === undefined || typeof sessionId !== 'string') return false
+          actions.focusTab(sessionId, target)
+          return true
+        } catch {
+          return false
+        }
+      }
       return (
       <StartapusBrowserPanel
         tabKey={tabId}
         visible={tabVisible}
         onClose={onClose}
         onOpenTab={onOpenTab}
+        onFocusTab={onFocusTab}
         params={requestedUrl === undefined ? undefined : { url: requestedUrl }}
         sessionId={props?.sessionId}
         onPick={(pick: ElementPick): PickResult => {

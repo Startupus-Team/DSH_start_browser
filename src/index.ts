@@ -81,6 +81,7 @@ interface ClientState {
   guestState: Record<string, unknown> | null
   sessions: Array<{ tabId: string; url: string; title: string }>
   engineActive: string | null
+  focusTabResult: { tabId: string; focused: boolean; at: number } | null
   panels: number | null
   panes: string[]
   lastNavAttempt: Record<string, unknown> | null
@@ -205,6 +206,7 @@ const TOOL_LIMITS: Record<string, number> = {
   ui_read_page: 20,
   ui_act: 20,
   ui_screenshot: 15,
+  ui_focus_tab: 15,
 }
 
 /** Read a text file, or throw with context. */
@@ -280,6 +282,7 @@ function blankClient(): ClientState {
   guestState: null,
   sessions: [],
   engineActive: null,
+  focusTabResult: null,
   panels: null,
   panes: [],
   lastNavAttempt: null,
@@ -917,6 +920,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         counters: totals(),
         sessions: client.sessions,
         panels: client.panels,
+        focusTabResult: client.focusTabResult,
         panes: client.panes,
         lastNavAttempt: client.lastNavAttempt,
         control: client.control,
@@ -987,6 +991,15 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           }))
       }
       if (typeof body.activeTab === 'string' && body.activeTab !== '') client.engineActive = body.activeTab
+      if (typeof body.focusTabResult === 'object' && body.focusTabResult !== null) {
+        const result = body.focusTabResult as { tabId?: string; focused?: boolean }
+        client.focusTabResult = {
+          tabId: typeof result.tabId === 'string' ? result.tabId : '',
+          focused: result.focused === true,
+          at: Date.now(),
+        }
+        probe('focustab:done', client.focusTabResult)
+      }
       if (typeof body.panels === 'number') client.panels = body.panels
       if (typeof body.lastNavAttempt === 'object' && body.lastNavAttempt !== null) {
         client.lastNavAttempt = body.lastNavAttempt as Record<string, unknown>
@@ -1434,6 +1447,21 @@ function buildTools(): Array<Record<string, unknown>> {
         requireTransport()
         const command = enqueue('close_tab', {})
         return { queued: true, commandId: command.id, tab: command.tab }
+      },
+    },
+    {
+      name: 'ui_focus_tab',
+      description: 'Вывести вкладку Startapus на передний план (как клик по вкладке). Нужно, чтобы проверить переключение и увидеть страницу. Результат — в ui_status.focusTabResult.',
+      parameters: objectSchema({
+        tabId: { type: 'string', description: 'Ключ вкладки из ui_tabs' },
+      }, ['tabId']),
+      output: output(asText),
+      execute: (args: Record<string, unknown>) => {
+        requireTransport()
+        const tabId = String(args.tabId ?? '')
+        if (tabId === '') throw new Error('E_NO_EFFECT: нужен tabId')
+        const command = enqueue('focus_tab', { tabId })
+        return { queued: true, commandId: command.id, tabId }
       },
     },
     {
