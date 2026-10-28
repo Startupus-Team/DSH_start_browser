@@ -2120,7 +2120,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
       name: 'ui_act',
       description: 'Действие на странице: click (по селектору), type (ввод в поле), scroll (к элементу или к Y). Инициируется агентом; результат приходит через ui_status/lastAct.',
       parameters: objectSchema({
-        op: { type: 'string', enum: ['click', 'type', 'scroll'], description: 'Операция' },
+        op: { type: 'string', enum: ['click', 'type', 'scroll', 'press'], description: 'Операция (press — нажатие клавиши, value = Enter/Tab/Escape)' },
         selector: { type: 'string', description: 'Селектор цели (для scroll можно пусто)' },
         value: { type: 'string', description: 'Текст для type или Y для scroll' },
         ref: { type: 'string', description: 'ref_N из ui_read_page/ui_find вместо селектора' },
@@ -2144,7 +2144,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
           const items = batch.map((item) => {
             const row = item as Record<string, unknown>
             const rowOp = String(row.op ?? '')
-            if (rowOp !== 'click' && rowOp !== 'type' && rowOp !== 'scroll') {
+            if (rowOp !== 'click' && rowOp !== 'type' && rowOp !== 'scroll' && rowOp !== 'press') {
               throw new Error(`E_NO_EFFECT: неизвестная операция ${rowOp}`)
             }
             const rowSelector = String(row.selector ?? '')
@@ -2157,8 +2157,8 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
           return { queued: true, commandId: command.id, count: items.length }
         }
         const op = String(args.op ?? '')
-        if (op !== 'click' && op !== 'type' && op !== 'scroll') {
-          throw new Error('E_NO_EFFECT: op должен быть click, type или scroll')
+        if (op !== 'click' && op !== 'type' && op !== 'scroll' && op !== 'press') {
+          throw new Error('E_NO_EFFECT: op должен быть click, type, scroll или press')
         }
         let selector = String(args.selector ?? '')
         const ref = String(args.ref ?? '')
