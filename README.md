@@ -220,3 +220,9 @@ node scripts/build-rev.mjs   # отпечаток сборки
 
 Релиз: версия в `package.json` = тег (`v0.24.0`), `CHANGELOG.md` — по фичам,
 матрица `startapus-browser-compliance.md` обновляется тем же коммитом.
+
+## Публикация в маркете DSH
+
+Два артефакта: npm-пакет и JSON-индекс формата 1, который пользователь добавляет в
+Plugins → Discover. Центрального стора у DSH нет. Подробно — [`docs/publishing.md`](docs/publishing.md);
+сборка и проверка — `npm run market` (артефакты в `dist/`).

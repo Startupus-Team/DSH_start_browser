@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" width="96" height="96" role="img" aria-label="Startapus Browser">
+  <rect x="4" y="10" width="88" height="76" rx="16" fill="#101216" stroke="#2b3240" stroke-width="3"/>
+  <rect x="4" y="10" width="88" height="20" rx="16" fill="#171a21"/>
+  <circle cx="16" cy="20" r="3" fill="#ff6b6b"/>
+  <circle cx="26" cy="20" r="3" fill="#ffd166"/>
+  <circle cx="36" cy="20" r="3" fill="#5ddc8a"/>
+  <path d="M28 58c4 8 12 12 20 12s16-4 20-12" stroke="#4ade80" stroke-width="6" fill="none" stroke-linecap="round"/>
+  <circle cx="34" cy="46" r="4" fill="#e7e9ee"/>
+  <circle cx="62" cy="46" r="4" fill="#e7e9ee"/>
+</svg>
