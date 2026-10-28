@@ -122,45 +122,47 @@ export function apply(ctx: ClientContext): void {
     // optional
   }
 
-  // Cmd+T (Ctrl+T elsewhere) opens the browser tab: the sequence was freed by
-  // disabling the built-in browser. The catalog row makes it discoverable; the
-  // listener is the actual handler.
+  // The shortcut uses the same service the built-in tools use (`shortcuts.register`
+  // with resolve/run): that is what makes the command appear in Settings and puts
+  // its keys on the guide card. Cmd+T was freed by disabling the built-in browser.
   try {
-    const shortcuts = ctx.get('shortcuts') as {
-      registerFixed?: (command: {
-        id: string
-        label: () => string
-        keys: string[]
-        bindings: Array<{ code: string; modifiers: string[] }>
-        group: string
-      }) => () => void
-    } | undefined
-    shortcuts?.registerFixed?.({
-      id: 'startapus-browser.new',
-      label: () => 'Открыть Startapus Browser',
-      keys: ['Cmd+T'],
-      bindings: [{ code: 'KeyT', modifiers: ['Meta'] }],
-      group: 'application',
+    ctx.inject(['shortcuts'], (scope: ClientContext) => {
+      const shortcuts = (scope as unknown as {
+        shortcuts?: {
+          register?: (command: {
+            id: string
+            label: () => string
+            aliases?: string[]
+            defaults: Record<string, { code: string; modifiers: string[] }>
+            regions?: string[]
+            modals?: string[]
+            resolve: () => { status: string; run: () => void }
+          }) => () => void
+        }
+      }).shortcuts
+      if (shortcuts === undefined || typeof shortcuts.register !== 'function') return
+      scope.effect(() => shortcuts.register?.({
+        id: 'startapus-browser.new',
+        label: () => 'Открыть Startapus Browser',
+        aliases: ['startapus', 'browser', 'открыть браузер'],
+        defaults: {
+          'desktop:macos': { code: 'KeyT', modifiers: ['primary'] },
+          'desktop:windows': { code: 'KeyT', modifiers: ['primary'] },
+          'web:macos': { code: 'KeyT', modifiers: ['primary'] },
+          'web:windows': { code: 'KeyT', modifiers: ['primary'] },
+        },
+        regions: ['page', 'editable'],
+        modals: [],
+        resolve: () => ({
+          status: 'handled',
+          run: () => {
+            requestOpenTab()
+          },
+        }),
+      }) ?? (() => undefined), 'startapus-browser: shortcut')
     })
   } catch {
-    // catalog is optional
-  }
-
-  try {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const modifier = event.metaKey || event.ctrlKey
-      if (!modifier || event.altKey || event.shiftKey) return
-      if (event.key.toLowerCase() !== 't') return
-      const target = event.target as HTMLElement | null
-      const tag = target?.tagName?.toLowerCase() ?? ''
-      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable === true) return
-      event.preventDefault()
-      requestOpenTab()
-    }
-    window.addEventListener('keydown', onKeyDown, true)
-    ctx.effect(() => () => window.removeEventListener('keydown', onKeyDown, true), 'startapus-browser: shortcut')
-  } catch {
-    // the shortcut must never break activation
+    // the shortcut is optional; it must never break activation
   }
 
   try {
