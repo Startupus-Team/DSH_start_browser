@@ -11,7 +11,7 @@
  */
 
 import type { ElementPick } from './element-refs.ts'
-import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript } from './verify-scripts'
+import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript } from './verify-scripts'
 import { cropRect as clampCropRect, normalizeAddress, normalizeWait, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
@@ -1529,6 +1529,21 @@ export function startEngine(): () => void {
             }
             await report(base as string, { waitResult: { ...outcome, at: Date.now() } })
             setStatus(outcome.met === true ? `условие выполнено за ${String(outcome.waitedMs)} мс` : `ожидание: условие не выполнено`)
+          }
+        } else if (command.kind === 'js') {
+          const view = await readyView(command)
+          const code = typeof command.args.code === 'string' ? command.args.code.slice(0, 4000) : ''
+          if (view === null || view.executeJavaScript === undefined) {
+            await report(base as string, { jsResult: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)', at: Date.now() } })
+          } else {
+            try {
+              const raw = await withTimeout(view.executeJavaScript(jsScript(code), false), 8000, 'E_TIMEOUT')
+              const parsed = typeof raw === 'string' ? JSON.parse(raw) as { status?: string; json?: string; truncated?: boolean; message?: string } : {}
+              if (parsed.status === 'OK') await report(base as string, { jsResult: { status: 'OK', json: parsed.json ?? 'null', truncated: parsed.truncated === true, at: Date.now() } })
+              else await report(base as string, { jsResult: { status: 'ERROR', message: String(parsed.message ?? 'ошибка выполнения'), at: Date.now() } })
+            } catch (error) {
+              await report(base as string, { jsResult: { status: 'ERROR', message: String(error), at: Date.now() } })
+            }
           }
         } else if (command.kind === 'color_scheme') {
           const view = await readyView(command)

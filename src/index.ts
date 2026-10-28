@@ -95,6 +95,7 @@ interface ClientState {
   inspect: Record<string, unknown> | null
   waitResult: Record<string, unknown> | null
   schemeResult: Record<string, unknown> | null
+  jsResult: Record<string, unknown> | null
   clientRev: string
   panelMounts: number
   lastLoadError: Record<string, unknown> | null
@@ -236,6 +237,7 @@ const TOOL_LIMITS: Record<string, number> = {
   ui_inspect: 30,
   ui_measure: 30,
   ui_wait: 30,
+  ui_js: 10,
 }
 
 /** Read a text file, or throw with context. */
@@ -325,6 +327,7 @@ function blankClient(): ClientState {
   inspect: null,
   waitResult: null,
   schemeResult: null,
+  jsResult: null,
   clientRev: '',
   panelMounts: 0,
   lastLoadError: null,
@@ -1141,7 +1144,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           probe('client:instance', { instanceId: body.instanceId, attached: body.attached === true, known: clientInstances.size })
         }
       }
-      for (const field of ['pageText', 'network', 'inspect', 'measure', 'waitResult', 'schemeResult'] as const) {
+      for (const field of ['pageText', 'network', 'inspect', 'measure', 'waitResult', 'schemeResult', 'jsResult'] as const) {
         const value = (body as Record<string, unknown>)[field]
         if (typeof value === 'object' && value !== null) {
           ;(client as unknown as Record<string, unknown>)[field] = value
@@ -1632,7 +1635,7 @@ function untrusted<T>(data: T, source = 'page'): { trust: { untrusted: true; sou
 }
 
 /** Wait until the renderer reports a fresh value for a page field. */
-async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitResult' | 'schemeResult', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
+async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitResult' | 'schemeResult' | 'jsResult', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
   for (let waited = 0; waited < timeoutMs; waited += 100) {
     const value = client[field]
     if (value !== null && typeof value.at === 'number' && value.at >= since) {
@@ -2139,6 +2142,36 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
           detail: result.detail ?? {},
           commandId: command.id,
         }, 'wait')
+      },
+    },
+    {
+      name: 'ui_js',
+      description: 'Выполнить JavaScript на странице (диагностика: значения из DOM, состояние приложения). Код — тело async-функции, результат берите через return; значение сериализуется в JSON (до 8000 символов). Не для действий пользователя — для них ui_act. Не работает, пока управление у человека.',
+      parameters: objectSchema({
+        code: { type: 'string', description: 'Тело async-функции, до 4000 символов; например: return document.title' },
+        tabId: tabIdParam,
+      }, ['code']),
+      output: output(asText),
+      execute: async (args: Record<string, unknown>) => {
+        const code = typeof args.code === 'string' ? args.code : ''
+        if (code.trim() === '') throw new Error('E_NO_EFFECT: пустой код')
+        if (code.length > 4000) throw new Error('E_LIMIT: код длиннее 4000 символов')
+        requireTransport()
+        if (client.control === 'human') {
+          fail('E_HUMAN_CONTROL', 'человек забрал управление', 'нажмите «Вернуть агенту» в панели')
+        }
+        const tabId = String(args.tabId ?? '')
+        const since = Date.now()
+        const command = enqueue('js', { ...(tabId === '' ? {} : { tabId }), code })
+        const result = await waitForField('jsResult', since, 12_000)
+        if (result.status === 'ERROR') throw new Error(`E_JS: ${String(result.message ?? 'ошибка выполнения')}`)
+        let value: unknown = null
+        try {
+          value = JSON.parse(String(result.json ?? 'null'))
+        } catch {
+          value = String(result.json ?? '')
+        }
+        return untrusted({ value, truncated: result.truncated === true, commandId: command.id }, 'js')
       },
     },
     {
@@ -2969,6 +3002,53 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
   } catch (error) {
     commands.length = 0
     results.push({ name: 'P3-1: ui_wait и эмуляция темы', pass: false, detail: String(error) })
+  }
+
+  // ui_js: gate, limits and the renderer round-trip.
+  try {
+    seedTransport()
+    commands.length = 0
+    const rejects = async (prefix: string, run: () => unknown): Promise<void> => {
+      try {
+        await run()
+      } catch (error) {
+        if (String(error instanceof Error ? error.message : error).startsWith(prefix)) return
+        throw error
+      }
+      throw new Error(`ожидалась ошибка ${prefix}`)
+    }
+    const send = async (body: Record<string, unknown>): Promise<void> => {
+      await handleRoute(fakeRequest(body, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    }
+    await rejects('E_NO_EFFECT', () => call('ui_js', { code: '   ' }))
+    await rejects('E_LIMIT', () => call('ui_js', { code: 'x'.repeat(4001) }))
+    client.control = 'human'
+    try {
+      await rejects('E_HUMAN_CONTROL', () => call('ui_js', { code: 'return 1' }))
+    } finally {
+      client.control = 'agent'
+    }
+    if (commands.length !== 0) throw new Error('отклонённый ui_js поставил команду')
+
+    const running = call('ui_js', { code: 'return document.title', tabId: 'tab-j' }) as Promise<Record<string, unknown>>
+    const jsCommand = commands[commands.length - 1]
+    if (jsCommand?.kind !== 'js' || jsCommand.args.code !== 'return document.title' || jsCommand.args.tabId !== 'tab-j') {
+      throw new Error(`js не поставлен: ${JSON.stringify(jsCommand)}`)
+    }
+    await send({ jsResult: { status: 'OK', json: '{"title":"Hi"}', truncated: false, at: Date.now() } })
+    const value = unwrap<{ value?: { title?: string }; truncated?: boolean }>(await running)
+    if (value.value?.title !== 'Hi' || value.truncated !== false) throw new Error(`js вернул ${JSON.stringify(value)}`)
+    commands.length = 0
+
+    const failing = call('ui_js', { code: 'throw 1' }) as Promise<unknown>
+    await send({ jsResult: { status: 'ERROR', message: 'boom', at: Date.now() } })
+    await rejects('E_JS', () => failing)
+    commands.length = 0
+    results.push({ name: 'P3-2: ui_js — гейт, лимиты, результат и ошибка', pass: true, detail: 'пусто/4001/человек → отказ; OK → value; ERROR → E_JS' })
+  } catch (error) {
+    commands.length = 0
+    client.control = null
+    results.push({ name: 'P3-2: ui_js — гейт, лимиты, результат и ошибка', pass: false, detail: String(error) })
   }
 
   // Phase 2: typed failures carry a hint the agent can act on.

@@ -471,3 +471,27 @@ export function colorSchemeScript(mode: 'dark' | 'light' | 'auto'): string {
     }
   })()`
 }
+
+/** Longest `ui_js` result (characters) the renderer reports back. */
+export const JS_RESULT_MAX = 8000
+
+/**
+ * Run agent-supplied code as the body of an async function on the page and
+ * report its JSON-serialised return value (truncated), or the thrown error.
+ */
+export function jsScript(code: string, max: number = JS_RESULT_MAX): string {
+  return `(async () => {
+    try {
+      const value = await (async () => {
+${code}
+      })();
+      let json;
+      try { json = JSON.stringify(value === undefined ? null : value); } catch (error) { json = JSON.stringify(String(value)); }
+      if (json === undefined) json = 'null';
+      const MAX = ${max};
+      return JSON.stringify({ status: 'OK', json: json.slice(0, MAX), truncated: json.length > MAX });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}

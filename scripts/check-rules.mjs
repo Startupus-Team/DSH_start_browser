@@ -222,8 +222,35 @@ check('R11: тема — переписывание media-запросов и о
   return 'dark/light переписывают 4 запроса (включая вложенный и <link>), auto возвращает оригинал'
 })
 
+const runJs = async (code, max) => {
+  try {
+    return JSON.parse(await vm.runInNewContext(scripts.jsScript(code, max), { document: { title: 'T' } }))
+  } catch (error) {
+    // A syntax error rejects executeJavaScript itself; the engine reports it as ERROR.
+    return { status: 'REJECTED', message: String(error) }
+  }
+}
+const jsValue = await runJs('return document.title')
+const jsAsync = await runJs('await Promise.resolve(); return { a: [1, 2], b: undefined }')
+const jsNothing = await runJs('const x = 1')
+const jsThrow = await runJs('throw new Error("boom")')
+const jsCyclic = await runJs('const o = {}; o.self = o; return o')
+const jsBig = await runJs('return "x".repeat(50)', 20)
+const jsSyntax = await runJs('return (')
+
+check('R12: ui_js — результат, ошибки, усечение', () => {
+  expect(jsValue.status === 'OK' && jsValue.json === '"T"', JSON.stringify(jsValue))
+  expect(jsAsync.status === 'OK' && jsAsync.json === '{"a":[1,2]}', JSON.stringify(jsAsync))
+  expect(jsNothing.status === 'OK' && jsNothing.json === 'null', JSON.stringify(jsNothing))
+  expect(jsThrow.status === 'ERROR' && jsThrow.message === 'boom', JSON.stringify(jsThrow))
+  expect(jsCyclic.status === 'OK' && jsCyclic.json.startsWith('"'), `цикл не превращён в строку: ${JSON.stringify(jsCyclic)}`)
+  expect(jsBig.truncated === true && jsBig.json.length === 20, JSON.stringify(jsBig))
+  expect(jsSyntax.status === 'REJECTED' && jsSyntax.message.includes('SyntaxError'), JSON.stringify(jsSyntax))
+  return 'значение, async, undefined→null, throw, цикл, усечение'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 11/11')
+console.log('RULES OK: 12/12')
