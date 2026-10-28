@@ -110,9 +110,8 @@ function PanelChrome(props: PanelProps): React.ReactNode {
       // A tab opened through the controller mounts hidden: front it so the kernel
       // lays the pane out and the guest can attach at all.
       focusStartapusTab(tabKey)
-      window.setTimeout(() => {
-        if (props.visible !== true) activateOwnTab()
-      }, 400)
+      // Timers are throttled in hidden panes, so try the DOM gesture immediately.
+      if (props.visible !== true) activateOwnTab()
     }
     const observer = new ResizeObserver(() => {
       setPaneState(tabKey, { host: hostRef.current, visible: props.visible !== false })
