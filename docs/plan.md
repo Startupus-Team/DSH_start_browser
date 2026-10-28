@@ -115,7 +115,7 @@
 | 1. Жизненный цикл | ✅ закрыта: ленивое создание, `pending`-дедуп, зомби-гард, LRU 6 / idle 15 мин, safe-sweep, `render-process-gone`+`crashed`+`destroyed` с пересозданием (E13), `verify` по `commandId` (SEC-1), атомарный стор (tmp+rename), мьютекс тика, long-poll (`wait:true`, POLL-1 252 мс), сверка `clientRev`/`revMatch` (REV-1) | — |
 | 2. Контракты | `ui_read_page` синхронный + `ref_N` в `ui_act`, 26 инструментов, единая схема `check-tools` | `tabId` в `ui_guest_state`/`ui_screenshot`/`ui_evidence`, консоль до 200 строк, паритет evidence (48 свойств, pseudo/ancestors), `get_page_text`, сеть (`PerformanceObserver`), `ui_inspect { styles }`, типизированные отказы |
 | 3. Безопасность | ✅ закрыта: Origin-гейт + POST-only на `/client/*`/`panic`/`selftest`, CORS без `*`, `/health` без сессий и URL, untrusted-конверт (read_page/find/console/page_text/network/inspect/guest_state), нонс пикера, `E_GUEST_GONE`, лимиты на управляющие инструменты | токен `/client/*` отклонён решением ADR-002 (Origin-гейт вместо него; подписанный ядром канал — внешнее требование) |
-| 4. Процесс | `selftest` собирает, `live` падает на `STALE`, тесты `SCRIPT/RULES/ENGINE/IMPORTS/TOOLS`, git-теги состояния | CI-гейт на коммит, регламент релиза/тегов, актуализация матрицы в том же коммите |
+| 4. Процесс | ✅ закрыта: `npm run gate` (сборка + SCRIPT/RULES/ENGINE/IMPORTS/TOOLS/selftest), `npm run gate:live` (плюс сверка с процессом), релиз `v0.24.0`, матрица обновлена фазами 1–3, теги состояния | — |
 
 ### Ближайшие 3 задачи (в порядке)
 

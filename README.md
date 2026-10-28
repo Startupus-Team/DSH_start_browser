@@ -160,3 +160,14 @@ src/client/picker-source.ts  внедряемый скрипт пикера
 src/client/element-refs.ts   чипы, кодек, вставка в композер
 build.mjs                    esbuild: host ESM + client CJS в __ModuleLoader__
 ```
+
+## Проверки и релиз
+
+```bash
+npm run gate        # сборка + SCRIPT/RULES/ENGINE/IMPORTS/TOOLS + selftest — обязательный гейт
+npm run gate:live   # то же + сверка с запущенным процессом (FRESH, transport, живой selftest)
+node scripts/build-rev.mjs   # отпечаток сборки
+```
+
+Релиз: версия в `package.json` = тег (`v0.24.0`), `CHANGELOG.md` — по фичам,
+матрица `startapus-browser-compliance.md` обновляется тем же коммитом.
