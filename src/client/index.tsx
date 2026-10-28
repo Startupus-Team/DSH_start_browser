@@ -232,10 +232,14 @@ export function apply(ctx: ClientContext): void {
         }
         walk(document)
         for (const node of all) {
-          const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${node.textContent ?? ''}`
+          const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim()
+          const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${text}`
           if (!/Стартапус|Startapus/i.test(label)) continue
           if (node.closest('.dsh-startapus-browser') !== null) continue
           if (node.getAttribute('aria-selected') === 'false') continue
+          // The document element also contains the word: require a chip-shaped node.
+          const chipLike = node.getAttribute('aria-selected') !== null || ((node.tagName === 'BUTTON' || node.tagName === 'A') && text.length < 80)
+          if (!chipLike) continue
           node.click()
           void note('tab:activated', { label: label.slice(0, 60), tag: node.tagName.toLowerCase() })
           return true
@@ -265,6 +269,8 @@ export function apply(ctx: ClientContext): void {
               const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${node.textContent ?? ''}`
               if (!/Startapus Browser/i.test(label)) continue
               if (node.closest('.dsh-startapus-browser') !== null) continue
+              const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim()
+              if (text.length > 160) continue
               node.click()
               void note('tab:guide', { label: label.slice(0, 60) })
               return
