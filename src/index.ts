@@ -1069,6 +1069,30 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
     if (path.endsWith('/client/event')) {
       client.lastSeen = Date.now()
       const body = await readJson(req, 4 * 1024 * 1024)
+      // Ownership is decided first: a stale bundle must not write the shared state
+      // (its "вкладка скрыта"/"клиент устарел" overwrote the live page's status).
+      const reportInstance = typeof body.instanceId === 'string' ? body.instanceId : ''
+      const ownsPage = !(body.attached === false || body.visible === false)
+      if (reportInstance !== '') {
+        const previous = clientInstances.get(reportInstance)
+        clientInstances.set(reportInstance, {
+          tabKey: typeof body.tabKey === 'string' ? body.tabKey : (previous?.tabKey ?? ''),
+          attached: body.attached === true,
+          visible: body.visible === true,
+          lastSeen: Date.now(),
+        })
+        if (previous === undefined || previous.attached !== (body.attached === true)) {
+          probe('client:instance', { instanceId: reportInstance, attached: body.attached === true, known: clientInstances.size })
+        }
+      }
+      const notePayloadEarly = body.note as { name?: string; data?: Record<string, unknown>; at?: number } | undefined
+      if (notePayloadEarly !== undefined && typeof notePayloadEarly.name === 'string') {
+        probe(notePayloadEarly.name, notePayloadEarly.data ?? {})
+      }
+      if (!ownsPage) {
+        sendJson(res, 200, { ok: true })
+        return
+      }
       // Field handlers below write into the reporting tab's own state.
       const state = stateFor(clientKey)
       if (typeof body.tabKey === 'string' && body.tabKey !== '') clientKey = body.tabKey
@@ -1109,13 +1133,6 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         if (previous === undefined || previous.attached !== (body.attached === true)) {
           probe('client:instance', { instanceId: body.instanceId, attached: body.attached === true, known: clientInstances.size })
         }
-      }
-      // Explicit "no page"/"hidden" reports never own the shared state; anything else
-      // (older clients, tests) is accepted for compatibility.
-      const ownsPage = !(body.attached === false || body.visible === false)
-      const notePayload = body.note as { name?: string; data?: Record<string, unknown>; at?: number } | undefined
-      if (notePayload !== undefined && typeof notePayload.name === 'string') {
-        probe(notePayload.name, notePayload.data ?? {})
       }
       for (const field of ['pageText', 'network', 'inspect', 'measure'] as const) {
         const value = (body as Record<string, unknown>)[field]
@@ -1267,12 +1284,6 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           message: typeof result.message === 'string' ? result.message : '',
         }
         probe('act:done', client.lastAct)
-      }
-      if (!ownsPage) {
-        // A stale bundle still polls; it must not overwrite the live page state
-        // (that made ui_tabs empty while a page was clearly on screen).
-        sendJson(res, 200, { ok: true })
-        return
       }
       if (typeof body.hidden === 'boolean') client.hidden = body.hidden
       if (typeof body.counters === 'object' && body.counters !== null) {

@@ -197,6 +197,7 @@ export function engineState(): EngineState {
     url: activeTabId === null ? '' : (sessions.get(activeTabId)?.url ?? ''),
     hasGuest: activeGuest() !== null,
     counters: { ...counters },
+    panes: [...paneState.entries()].map(([tabId, state]) => ({ tabId, url: state.url, visible: state.visible })),
   }
 }
 

@@ -145,12 +145,31 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   }, [tabKey, initialUrl])
 
   useEffect(() => {
-    setPaneState(tabKey, {
-      url: initialUrl,
-      host: hostRef.current,
-      visible: props.visible === true,
-    })
-  }, [props.visible, tabKey, initialUrl])
+    // props.visible comes from the kernel and can lag behind reality (a selected tab
+    // still reports false). Measure our own layout instead, every tick.
+    const paneVisible = (): boolean => {
+      let node: HTMLElement | null = hostRef.current
+      if (node === null || !node.isConnected) return false
+      for (let depth = 0; node !== null && depth < 10; depth += 1) {
+        const style = window.getComputedStyle(node)
+        if (style.display === 'none' || style.visibility === 'hidden') return false
+        const box = node.getBoundingClientRect()
+        if (style.display !== 'contents' && (box.width <= 1 || box.height <= 1)) return false
+        node = node.parentElement
+      }
+      return true
+    }
+    const reportVisibility = (): void => {
+      setPaneState(tabKey, { url: initialUrl, host: hostRef.current, visible: paneVisible() })
+    }
+    reportVisibility()
+    const visibilityTimer = window.setInterval(reportVisibility, 700)
+    window.addEventListener('resize', reportVisibility)
+    return () => {
+      window.clearInterval(visibilityTimer)
+      window.removeEventListener('resize', reportVisibility)
+    }
+  }, [tabKey, initialUrl])
 
   const togglePick = useCallback((): void => {
     const next = !pickingRef.current
