@@ -535,7 +535,17 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     window.setTimeout(() => {
       if (session.ready || session.guest === null) return
       counters.attachFailures += 1
-      setStatus('guest не подключился: ядро отклонило attach')
+      // Keep a compact DOM trace in the status: it is readable without restarting
+      // the host plugin, which is where the note log lives.
+      const trace: string[] = []
+      let cursor: HTMLElement | null = host
+      while (cursor !== null && trace.length < 5) {
+        const box = cursor.getBoundingClientRect()
+        const id = cursor.id === '' ? '' : `#${cursor.id}`
+        trace.push(`${cursor.tagName.toLowerCase()}${id}(${Math.round(box.width)}x${Math.round(box.height)})`)
+        cursor = cursor.parentElement
+      }
+      setStatus(`guest не подключился: ядро отклонило attach · ${trace.join(' < ') || 'нет host'}`)
       const chain: Array<Record<string, unknown>> = []
       let node: HTMLElement | null = host
       while (node !== null && chain.length < 8) {
