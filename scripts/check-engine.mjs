@@ -231,8 +231,8 @@ await check('E9: мёртвая сессия не маскирует живую'
 })
 
 await check('E10: навигация адресуется своей сессии', async () => {
-  const first = engine.listSessions()[0]
-  expect(first !== undefined, 'нет сессий')
+  const first = engine.listSessions().find((row) => engine.guestOf(row.tabId) !== null)
+  expect(first !== undefined, 'нет сессии с живым гостем')
   const hostB = new FakeElement('div')
   body.appendChild(hostB)
   await engine.showSession('nav-b', 'https://nav-b.example/', hostB)
