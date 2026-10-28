@@ -1,5 +1,25 @@
 # Changelog — startapus-browser
 
+## 0.22.0 — фаза 2: контракты инструментов
+
+### Добавлено
+
+- **`ui_page_text`** — видимый текст, article-first (контракт `get_page_text` у Claude).
+- **`ui_network`** — ресурсы страницы из `PerformanceObserver`: URL, тип, длительность, размер,
+  пометка медленных (≥400 мс) и тяжёлых (≥200 КБ).
+- **`ui_inspect { selector, styles }`** — точечный замер указанных CSS-свойств + box + окружение.
+- **`tabId`** у `ui_screenshot`, `ui_select`, `ui_act`, `ui_read_page`, `ui_guest_state`,
+  `ui_close_tab` — инструменты адресуют конкретную вкладку, а не только активную.
+- **Консоль до 200 строк** (было 30) и в движке, и в `ui_console`.
+- **Паритет evidence с пикером:** 50 свойств без выбрасывания `0px`, добавлены `ancestors`,
+  `pseudo` (::before/::after) и `fragment`.
+- **Типизированные отказы:** `E_*` с подсказкой (`E_HUMAN_CONTROL → «Вернуть агенту»`,
+  `E_NO_COVERAGE → ui_read_page`), у ошибки есть `code`/`hint`/`retryable`.
+
+### Проверки
+
+`SCRIPT 13/13 · ENGINE 13/13 · TOOLS 29 · selftest 49/49` (+`P2-1`, `P2-2`, `P2-3`).
+
 ## 0.21.1 — фаза 1 закрыта
 
 ### Добавлено

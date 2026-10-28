@@ -1446,6 +1446,20 @@ function buildTools(): Array<Record<string, unknown>> {
   /** `tabId` selector shared by the page-facing tools. */
 const tabIdParam = { type: 'string', description: 'Ключ вкладки из ui_tabs (по умолчанию активная)' } as const
 
+/**
+ * Tool failure with a machine-readable code and a human hint.
+ * The message keeps the `CODE: text` form so existing callers and tests match it,
+ * and carries `retryable`/`hint` for callers that read the message.
+ */
+function fail(code: string, message: string, hint?: string): never {
+  const suffix = hint === undefined || hint === '' ? '' : ` — ${hint}`
+  const error = new Error(`${code}: ${message}${suffix}`) as Error & { code: string; hint?: string; retryable: boolean }
+  error.code = code
+  error.hint = hint
+  error.retryable = code === 'E_TIMEOUT' || code === 'E_NO_TRANSPORT' || code === 'E_SCAN'
+  throw error
+}
+
 /** Wait until the renderer reports a fresh value for a page field. */
 async function waitForField(field: 'pageText' | 'network' | 'inspect', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
   for (let waited = 0; waited < timeoutMs; waited += 100) {
@@ -1607,7 +1621,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
       execute: (args: Record<string, unknown>) => {
         requireTransport()
         if (client.control === 'human') {
-          throw new Error('E_HUMAN_CONTROL: человек забрал управление — попросите вернуть его кнопкой в панели')
+          fail('E_HUMAN_CONTROL', 'человек забрал управление', 'нажмите «Вернуть агенту» в панели')
         }
         const url = validateUrl(args.url)
         const origin = new URL(url).origin
@@ -1664,11 +1678,11 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         requireTransport()
         const id = String(args.id ?? '')
         if (client.hidden) {
-          throw new Error('E_TAB_HIDDEN: панель скрыта — откройте вкладку Startapus и повторите проверку')
+          fail('E_TAB_HIDDEN', 'панель скрыта', 'откройте вкладку Startapus и повторите')
         }
         const task = tasks.get(id)
         if (task === undefined) throw new Error(`E_NOT_FOUND: нет задачи ${id}`)
-        if (task.acceptance === null) throw new Error('E_NO_ACCEPTANCE: у задачи нет критерия приёмки')
+        if (task.acceptance === null) fail('E_NO_ACCEPTANCE', 'у задачи нет критерия приёмки', 'создайте критерий при task_create')
         if (task.scope === 'area') {
           if (task.area === null || task.area.covered.length === 0) {
             throw new Error('E_UNVERIFIABLE_SCOPE: у задачи нет покрытых элементов области')
@@ -1685,12 +1699,12 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         if (task.attempts >= MAX_VERIFY_ATTEMPTS) {
           throw new Error('E_LIMIT: breaker — 3 неудачные проверки, нужен пере-пик и новый критерий')
         }
-        if (task.selector === '') throw new Error('E_NO_PICK: у задачи нет сохранённого локатора')
+        if (task.selector === '') fail('E_NO_PICK', 'у задачи нет сохранённого локатора', 'выберите элемент через ui_select')
         const activeUrl = client.sessions.find((row) => row.tabId === client.engineActive)?.url ?? ''
         if (task.url !== '' && activeUrl !== '') {
           try {
             if (new URL(task.url).host !== new URL(activeUrl).host) {
-              throw new Error(`E_ENV_MISMATCH: задача с ${new URL(task.url).host}, открыт ${new URL(activeUrl).host}`)
+              fail('E_ENV_MISMATCH', `задача с ${new URL(task.url).host}, открыт ${new URL(activeUrl).host}`, 'откройте страницу задачи или создайте новую')
             }
           } catch (error) {
             if (error instanceof Error && error.message.startsWith('E_ENV_MISMATCH')) throw error
@@ -1813,7 +1827,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
           }
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
-        throw new Error(`E_TIMEOUT: обзор не пришёл за 4 с (команда ${command.id}) — повторите ui_read_page`)
+        fail('E_TIMEOUT', `обзор не пришёл за 4 с (команда ${command.id})`, 'повторите ui_read_page')
       },
     },
     {
@@ -1932,7 +1946,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
       execute: (args: Record<string, unknown>) => {
         requireTransport()
         if (client.control === 'human') {
-          throw new Error('E_HUMAN_CONTROL: человек забрал управление — попросите вернуть его кнопкой в панели')
+          fail('E_HUMAN_CONTROL', 'человек забрал управление', 'нажмите «Вернуть агенту» в панели')
         }
         const batch = Array.isArray(args.items) ? args.items : null
         if (batch !== null) {
@@ -1961,9 +1975,9 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         const ref = String(args.ref ?? '')
         if (ref !== '') {
           const scan = client.pageScan
-          if (scan === null) throw new Error('E_NO_COVERAGE: сначала вызовите ui_read_page')
+          if (scan === null) fail('E_NO_COVERAGE', 'нет обзора страницы', 'вызовите ui_read_page и передайте ref')
           const row = scan.items.find((item) => item.ref === ref)
-          if (row === undefined) throw new Error(`E_NOT_FOUND: ${ref} нет в последнем обзоре — вызовите ui_read_page`)
+          if (row === undefined) fail('E_NOT_FOUND', `${ref} нет в последнем обзоре`, 'вызовите ui_read_page заново')
           selector = String(row.selector ?? '')
         }
         if (op !== 'scroll' && selector === '') throw new Error('E_NO_EFFECT: для click/type нужен selector или ref')
@@ -2614,6 +2628,37 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
   } catch (error) {
     commands.length = 0
     results.push({ name: 'P2-2: inspect и page_text возвращают результат', pass: false, detail: String(error) })
+  }
+
+  // Phase 2: typed failures carry a hint the agent can act on.
+  try {
+    seedTransport()
+    client.control = 'human'
+    let controlMessage = ''
+    try {
+      call('ui_act', { op: 'scroll', value: '1' })
+    } catch (error) {
+      controlMessage = String(error instanceof Error ? error.message : error)
+    }
+    client.control = 'agent'
+    if (!controlMessage.includes('E_HUMAN_CONTROL') || !controlMessage.includes('Вернуть агенту')) {
+      throw new Error(`нет подсказки: ${controlMessage}`)
+    }
+    const savedScan = client.pageScan
+    client.pageScan = null
+    let coverageMessage = ''
+    try {
+      call('ui_act', { op: 'click', ref: 'ref_1' })
+    } catch (error) {
+      coverageMessage = String(error instanceof Error ? error.message : error)
+    }
+    client.pageScan = savedScan
+    if (!coverageMessage.includes('ui_read_page')) throw new Error(`нет подсказки: ${coverageMessage}`)
+    commands.length = 0
+    results.push({ name: 'P2-3: типизированные отказы с подсказкой', pass: true, detail: 'E_HUMAN_CONTROL → «Вернуть агенту», E_NO_COVERAGE → ui_read_page' })
+  } catch (error) {
+    client.control = null
+    results.push({ name: 'P2-3: типизированные отказы с подсказкой', pass: false, detail: String(error) })
   }
 
   // Human control blocks agent mutations.

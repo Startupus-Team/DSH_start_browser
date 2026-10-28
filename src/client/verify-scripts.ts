@@ -102,17 +102,33 @@ export function evidenceScript(selector: string): string {
         }
         return parts.join(' > ');
       }
+      // Same depth as the human picker: no zero-dropping (0px is a real value),
+      // the full box/spacing/typography surface plus ancestors and a fragment.
       var props = ['display','position','visibility','opacity','box-sizing','width','height',
-        'margin-top','margin-bottom','padding-left','padding-right','gap','flex-direction',
-        'font-family','font-size','font-weight','line-height','color','background-color',
-        'border-radius','border-color','box-shadow','overflow','text-align'];
+        'margin-top','margin-right','margin-bottom','margin-left','padding-top','padding-right',
+        'padding-bottom','padding-left','gap','row-gap','column-gap','flex-direction','flex-wrap',
+        'justify-content','align-items','font-family','font-size','font-weight','line-height',
+        'letter-spacing','color','background-color','background-image','border-top-width',
+        'border-right-width','border-bottom-width','border-left-width','border-radius','border-color',
+        'border-style','box-shadow','overflow','overflow-x','overflow-y','text-align','text-transform',
+        'text-decoration-line','white-space','cursor','pointer-events','user-select','z-index',
+        'transform','transition-duration','grid-template-columns'];
       var computed = {};
       var cs = window.getComputedStyle(el);
       for (var index = 0; index < props.length; index += 1) {
         var name = props[index];
         var value = cs.getPropertyValue(name);
-        if (value !== '' && value !== 'normal' && value !== 'none' && value !== 'auto' && value !== '0px') computed[name] = value;
+        if (value !== '') computed[name] = value;
       }
+      var ancestors = [];
+      var walker = el.parentElement;
+      while (walker && ancestors.length < 3) {
+        ancestors.push({ tag: walker.tagName.toLowerCase(), id: walker.id || '', classes: (walker.className || '').toString().trim().slice(0, 120) });
+        walker = walker.parentElement;
+      }
+      var before = window.getComputedStyle(el, '::before');
+      var after = window.getComputedStyle(el, '::after');
+      var pseudo = { beforeContent: before.content, afterContent: after.content };
       var rect = el.getBoundingClientRect();
       var aria = el.getAttribute('aria-label') || (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 160);
       return JSON.stringify({
@@ -131,6 +147,9 @@ export function evidenceScript(selector: string): string {
           box: { clientWidth: el.clientWidth, clientHeight: el.clientHeight, scrollWidth: el.scrollWidth, scrollHeight: el.scrollHeight },
           state: { disabled: el.disabled === true, hidden: cs.display === 'none' || cs.visibility === 'hidden', focused: document.activeElement === el },
           computed: computed,
+          ancestors: ancestors,
+          pseudo: pseudo,
+          fragment: (el.outerHTML || '').slice(0, 1200),
           env: {
             url: String(location.href),
             title: String(document.title || ''),
