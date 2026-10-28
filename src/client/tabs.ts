@@ -136,3 +136,22 @@ export function registerTabsCloseHandler(kind: string, handler: (tabId: string) 
     return false
   }
 }
+
+/** Front a Startapus tab through the navigation controller (`focus(tabId)`). */
+export function focusStartapusTab(tabId: string): boolean {
+  try {
+    const source = context as {
+      get?: (name: string) => unknown
+      sidebarRight?: { focus?: (id: string) => unknown }
+    } | null
+    if (source === null || source === undefined) return false
+    const service = typeof source.get === 'function'
+      ? (source.get('sidebarRight') as { focus?: (id: string) => unknown } | undefined)
+      : source.sidebarRight
+    if (service === undefined || service === null || typeof service.focus !== 'function') return false
+    service.focus(tabId)
+    return true
+  } catch {
+    return false
+  }
+}

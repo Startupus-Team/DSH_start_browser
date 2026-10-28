@@ -13,7 +13,7 @@
 import type { ElementPick } from './element-refs.ts'
 import { actScript, coverageScript, evidenceScript, measureScript, pageScanScript } from './verify-scripts'
 import { cropRect as clampCropRect, normalizeAddress, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
-import { openStartapusTab } from './tabs'
+import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
 import { poll, probe, report, setTab } from './transport'
 
@@ -757,7 +757,9 @@ export function startEngine(): void {
           }
         } else if (command.kind === 'focus_tab') {
           const target = String(command.args.tabId ?? '')
-          const focused = focusTabRequested === null ? false : focusTabRequested(target)
+          // Bound pane actions first; the navigation controller's focus(tabId)
+          // is the documented fallback.
+          const focused = (focusTabRequested !== null && focusTabRequested(target)) || focusStartapusTab(target)
           await report(base as string, { focusTabResult: { tabId: target, focused } })
           setStatus(focused ? `вкладка ${target} активирована` : `не удалось активировать ${target}`)
         } else if (command.kind === 'close_tab') {
