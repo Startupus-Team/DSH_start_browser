@@ -219,6 +219,20 @@ export function apply(ctx: ClientContext): void {
   try {
     // Activate a mounted Startapus tab by clicking its chip in the kernel tab strip.
     setActivateFallback(() => {
+      // A collapsed right column keeps every pane at 0x0 and the guest never renders.
+      // The kernel exposes ctx.layout.openRightbar: ask it to show the column first.
+      try {
+        const layout = ctx.get('layout') as {
+          openRightbar?: (track?: string, fullscreen?: boolean) => void
+          selectPanel?: (id: string) => void
+        } | undefined
+        if (layout?.openRightbar !== undefined) {
+          layout.openRightbar('tabs', false)
+          void note('layout:openRightbar', { track: 'tabs' })
+        }
+      } catch (error) {
+        void note('layout:openRightbar:error', { error: String(error) })
+      }
       // Only real tabs: never click links, cards or anything else in the app UI —
       // a stray anchor opened the user's default browser once. Tab chips are the
       // single safe target, and they live inside the sidebar's shadow roots.
