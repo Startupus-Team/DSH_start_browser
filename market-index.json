@@ -1,0 +1,58 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Startapus plugins",
+    "ru": "Плагины Startapus"
+  },
+  "description": {
+    "en": "Bundles published for DSH by Startapus.",
+    "ru": "Бандлы для DSH, опубликованные Startapus."
+  },
+  "metadata": {
+    "categories": {
+      "browser": {
+        "title": {
+          "en": "Browser",
+          "ru": "Браузер"
+        }
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "startapus-browser",
+      "title": {
+        "en": "Startapus Browser",
+        "ru": "Startapus Browser"
+      },
+      "description": {
+        "en": "A real webview browser tab in the DSH right sidebar with agent tools and an element picker.",
+        "ru": "Настоящий браузер во правой панели DSH: агентские инструменты и пикер элементов."
+      },
+      "icon": "./icon.svg",
+      "metadata": {
+        "category": "browser",
+        "keywords": [
+          "browser",
+          "webview",
+          "review",
+          "screenshot"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.24.0",
+          "publishTimestamp": 1793204550,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Startupus-Team/DSH_start_browser",
+            "commit": "dc77eac511d007041595c82fba3031e13d493c97"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.3.0"
+          }
+        }
+      ]
+    }
+  ]
+}

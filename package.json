@@ -1,6 +1,6 @@
 {
   "name": "startapus-browser",
-  "version": "0.24.0",
+  "version": "0.25.0",
   "description": "Startapus Browser — a real <webview> browser tab in the DSH right sidebar with agent tools (read page, act, screenshot, verify) and a DOM element picker.",
   "type": "module",
   "main": "lib/index.js",
