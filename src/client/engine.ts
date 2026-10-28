@@ -128,6 +128,8 @@ const listeners = new Set<() => void>()
 const mountedPaneKeys = new Set<string>()
 /** Recent guest losses per tab; survives session replacement (a storm resets sessions). */
 const recoveryLedger = new Map<string, number[]>()
+/** Tabs with a rebuild in flight: two panels must not rebuild the same tab. */
+const recovering = new Set<string>()
 
 /** How many times a pane was mounted — a remount is what reloads a page. */
 let panelMounts = 0
@@ -487,8 +489,11 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     const onLost = (kind: string) => (event: Event): void => {
       // Electron versions put `reason` either on `detail` or on the event itself.
       const detail = (event as CustomEvent<{ reason?: string; details?: string }>).detail
-      const loose = event as unknown as { reason?: string; details?: string }
-      const reason = String(loose.reason ?? loose.details ?? detail?.reason ?? detail?.details ?? '')
+      const loose = event as unknown as { reason?: unknown; details?: unknown }
+      const raw = loose.reason ?? loose.details ?? detail?.reason ?? detail?.details
+      const reason = raw === undefined || raw === null
+        ? ''
+        : (typeof raw === 'string' ? raw : String((raw as { reason?: string }).reason ?? JSON.stringify(raw)))
       handleGuestLoss(session, reason === '' ? kind : `${kind}:${reason}`)
     }
     created.addEventListener('render-process-gone', onLost('render-process-gone'))
@@ -550,8 +555,13 @@ function handleGuestLoss(session: Session, kind: string): void {
   if (recent.length >= 3) {
     recoveryLedger.set(session.tabId, recent)
     setStatus(`E_GUEST_LOOP: гость падает (${kind}) больше 3 раз за 10 с — остановил восстановление`)
-    session.guest = null
-    session.ready = false
+    sessions.delete(session.tabId)
+    releaseLease(session)
+    try {
+      session.container.remove()
+    } catch {
+      // already gone
+    }
     notify()
     return
   }
@@ -582,6 +592,8 @@ function handleGuestLoss(session: Session, kind: string): void {
   })
   window.setTimeout(() => {
     if (sessions.get(session.tabId) !== session) return
+    if (recovering.has(session.tabId)) return
+    recovering.add(session.tabId)
     sessions.delete(session.tabId)
     releaseLease(session)
     try {
@@ -590,6 +602,8 @@ function handleGuestLoss(session: Session, kind: string): void {
       // already gone
     }
     void showSession(session.tabId, url, host)
+      .catch(() => undefined)
+      .finally(() => recovering.delete(session.tabId))
   }, 0)
 }
 
