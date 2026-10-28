@@ -321,10 +321,7 @@ async function readyView(command: { args: Record<string, unknown> }, timeoutMs =
       candidate = sessions.get(activeTabId ?? '') ?? candidate
     }
   }
-  // Fall back to any ready page rather than failing the whole command.
-  for (const session of sessions.values()) {
-    if (session.ready && session.guest !== null) return session.guest
-  }
+  // Never substitute another tab: addressing is the whole point of the wait.
   return null
 }
 
