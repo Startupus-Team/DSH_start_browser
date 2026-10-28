@@ -406,8 +406,21 @@ export async function activateSession(tabId: string, initialUrl: string, host: H
 /** Bring one tab to the front (the kernel says this tab is visible now). */
 export async function showSession(tabId: string, initialUrl: string, host: HTMLElement | null): Promise<void> {
   activeTabId = tabId
+  // A second activation may arrive while the first is still acquiring the guest
+  // (mount + visibility effects). Deleting "guest === null" there orphaned the
+  // in-flight session: acquires grew once, but the registry stayed empty.
+  const inFlight = pending.get(tabId)
+  if (inFlight !== undefined) {
+    const raced = await inFlight
+    for (const other of sessions.values()) {
+      if (other.tabId !== tabId) position(other, false)
+    }
+    if (raced !== null) position(raced, true)
+    notify()
+    return
+  }
   const known = sessions.get(tabId)
-  if (known !== undefined && (known.guest === null || !known.container.isConnected)) {
+  if (known !== undefined && !known.container.isConnected) {
     // The pane DOM was replaced (plugin reload, remount): the guest inside the
     // detached container is dead, so forget the zombie session and build a new one.
     sessions.delete(tabId)

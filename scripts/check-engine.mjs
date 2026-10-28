@@ -258,8 +258,24 @@ await check('E11: передача управления меняет состо�
   return 'human → agent'
 })
 
+await check('E12: параллельная активация = одна сессия и один acquire', async () => {
+  const hostRace = new FakeElement('div')
+  body.appendChild(hostRace)
+  const before = bridgeCalls.acquire
+  await Promise.all([
+    engine.showSession('race', 'https://race.example/', hostRace),
+    engine.showSession('race', 'https://race.example/', hostRace),
+    engine.showSession('race', 'https://race.example/', hostRace),
+  ])
+  const rows = engine.listSessions().filter((row) => row.tabId === 'race')
+  expect(rows.length === 1, `сессий race: ${rows.length}`)
+  expect(bridgeCalls.acquire === before + 1, `acquire: ${bridgeCalls.acquire - before}`)
+  expect(engine.guestOf('race') !== null, 'гость race не создан')
+  return '3 вызова → 1 acquire, 1 сессия'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 11/11')
+console.log('ENGINE OK: 12/12')
