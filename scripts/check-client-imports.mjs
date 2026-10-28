@@ -67,6 +67,7 @@ const pickerChecks = [
   ['нонс в payload пикера', pickerSource.includes('__startapusNonce')],
   ['проверка нонса в панели', readFileSync('src/client/panel.tsx', 'utf8').includes('pick.nonce !== nonce')],
   ['E_GUEST_GONE в движке', engineSource.includes('E_GUEST_GONE')],
+  ['пикер по ⌘⇧P', indexSource.includes('startapus-browser.pick') && indexSource.includes('requestPick()')],
 ]
 for (const [name, ok] of pickerChecks) {
   if (!ok) {

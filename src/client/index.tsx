@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { StartapusBrowserPanel } from './panel.tsx'
 import { elementSource, insertElementRef, type ElementPick } from './element-refs.ts'
-import { noteShortcutState, requestOpenTab, setActivateFallback, setGuideFallback, shortcutHint, startEngine } from './engine'
+import { noteShortcutState, requestOpenTab, requestPick, setActivateFallback, setGuideFallback, shortcutHint, startEngine } from './engine'
 import { note } from './transport'
 import { markTabClosing, registerTabsCloseHandler } from './tabs'
 import { setTabsApi } from './tabs'
@@ -256,6 +256,50 @@ export function apply(ctx: ClientContext): void {
         return false
       }
     })
+
+    // ⌘⇧P picks an element: same gesture as the прицел button, catalog-visible.
+    try {
+      ctx.inject(['shortcuts'], (scope: ClientContext) => {
+        const service = (scope as unknown as { shortcuts?: { register?: (command: Record<string, unknown>) => () => void } }).shortcuts
+        if (service === undefined || typeof service.register !== 'function') return
+        for (const candidate of [
+          { keys: 'Cmd+Shift+P', modifiers: ['primary', 'shift'] },
+          { keys: 'Cmd+Alt+P', modifiers: ['primary', 'alt'] },
+        ]) {
+          try {
+            scope.effect(() => service.register?.({
+              id: 'startapus-browser.pick',
+              label: () => 'Выбрать элемент на странице (Startapus)',
+              aliases: ['startapus', 'pick', 'элемент'],
+              defaults: { 'desktop:macos': { code: 'KeyP', modifiers: candidate.modifiers } },
+              regions: ['page'],
+              modals: [],
+              resolve: () => ({ status: 'handled', run: () => { requestPick() } }),
+            }) ?? (() => undefined), 'startapus-browser: pick shortcut')
+            void note('shortcut:pick', { keys: candidate.keys, ok: true })
+            break
+          } catch (error) {
+            void note('shortcut:pick', { keys: candidate.keys, ok: false, error: String(error) })
+          }
+        }
+      })
+    } catch {
+      // optional catalog row
+    }
+
+    // The listener is what works even when the catalog rejects the combination.
+    try {
+      const onPickKey = (event: KeyboardEvent): void => {
+        if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.altKey) return
+        if (event.key.toLowerCase() !== 'p') return
+        event.preventDefault()
+        requestPick()
+      }
+      window.addEventListener('keydown', onPickKey, true)
+      ctx.effect(() => () => window.removeEventListener('keydown', onPickKey, true), 'startapus-browser: pick listener')
+    } catch {
+      // never break activation
+    }
 
     ctx.effect(() => startEngine(), 'startapus-browser: agent channel')
   } catch {

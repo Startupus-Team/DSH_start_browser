@@ -398,6 +398,16 @@ export function crashedInfo(tabId: string): { url: string; reason: string; at: n
   return crashedTabs.get(tabId) ?? null
 }
 
+/** Start element picking from the panel/shortcut, not only from the agent command. */
+export function requestPick(): boolean {
+  try {
+    pickRequested()
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Try to front one of our tabs after a deferred creation. */
 export function activateOwnTab(): boolean {
   if (activateTabFallback === null) return false
