@@ -401,8 +401,27 @@ await check('E19: адресная строка ждёт создания гос
   return 'адрес запомнен и открыт после создания гостя'
 })
 
+await check('E20: упавшая вкладка не поднимается сама, только по «Восстановить»', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  engine.setPaneState('crashedPane', { url: 'https://crashpane.example/', host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  const guest = engine.guestOf('crashedPane')
+  expect(guest !== null, 'гость не создан')
+  guest.fire('dom-ready')
+  guest.fire('render-process-gone')
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  expect(engine.crashedInfo('crashedPane') !== null, 'падение не записано')
+  expect(engine.guestOf('crashedPane') === null, 'упавшая вкладка поднялась сама')
+  const restored = engine.restoreCrashedTab('crashedPane')
+  expect(restored === true, 'restoreCrashedTab вернул false')
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  expect(engine.guestOf('crashedPane') !== null, 'после «Восстановить» гость не создан')
+  return 'падение удерживается, восстановление только вручную'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 19/19')
+console.log('ENGINE OK: 20/20')

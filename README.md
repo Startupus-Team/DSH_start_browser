@@ -4,6 +4,43 @@
 сайты, toolbar и DOM-пикер элемента, который отправляет выбранный элемент агенту в
 композер как чип `ЭлементN`.
 
+## Быстрый старт
+
+1. Плагин в профиле `~/.dsh/profiles/desktop/cordis.patch.yml`; штатный браузер ядра отключён
+   (`- id: ui-sidebar-browser / disabled: true`) — это освобождает `⌘T`.
+2. Запустить DSH, открыть правый сайдбар.
+3. **Нажать `⌘T`** (Ctrl+T вне macOS) — вкладку активирует само ядро, панель монтируется
+   видимой, движок создаёт гостя и открывает `https://startapus.com`.
+4. Дальше агент управляет страницей инструментами; человек при необходимости забирает
+   управление кнопкой в панели.
+
+Почему первый раз вкладку открывает человек: у плагина нет API активации вкладки
+(см. `docs/kernel-request.md`). Из состояния «ни одной вкладки» агент вкладку создать
+может, но ядро её не показывает — поэтому канонический вход именно `⌘T`.
+
+## Горячие клавиши и адресная строка
+
+| Действие | Как |
+|---|---|
+| Открыть браузер | `⌘T` (`startapus-browser.new` в каталоге ярлыков) |
+| Ввод адреса | строка адреса, `Enter`; поддерживаются `example.com`, `http(s)://…` |
+| Переключение вкладок | клик по ярлыку в полосе (ядро); агент — `ui_focus_tab { tabId }` |
+| Пикер элемента | кнопка-прицел в панели (историческая запись: `ui_pick`, `ui_pick_area`) |
+| Управление агентом | баннер «Агент управляет страницей» / «Забрать управление» |
+
+## Диагностика
+
+- `~/.dsh/startapus-host.log` — `apply:start`, `tools:registered`, `verify:done/error`,
+  `act:done`, `select:done`, `crop:saved`, `lease:acquire/release`, `guest:lost`,
+  `guest:crashed`, `attach:timeout`, `dom:tabs`.
+- `/startapus-browser/health` — `buildRev`/`clientRev`/`revMatch`, `panels`, `sessionsCount`,
+  `urlHost`, `panelMounts`, `counters {acquires, releases, recoveries, crashes, navigations,
+  loadErrors, attachFailures}`, `lastLoadError`, `lastNavAttempt`, `shortcutState`.
+- `npm run live` — сверка живого процесса (FRESH, transport, selftest, утечка lease,
+  шторм восстановлений, ресинхрон сборок).
+- `npm run soak` (или `npm run soak:short`) — наблюдение за инвариантами жизни вкладки.
+- `scripts/dsh-cookie-doctor.mjs` — накопление `dsh-auth-*` cookie (причина падений DSH).
+
 ## Что умеет
 
 Стартовая страница по умолчанию — `https://startapus.com`.

@@ -324,6 +324,9 @@ interface PaneState {
   visible: boolean
 }
 const paneState = new Map<string, PaneState>()
+/** Tabs whose renderer died: held until the human asks to restore them. */
+const crashedTabs = new Map<string, { url: string; reason: string; at: number }>()
+
 /** Address typed before the guest existed: it wins over the pane's default URL. */
 const requestedUrl = new Map<string, string>()
 let reconciling = false
@@ -356,6 +359,11 @@ async function reconcile(): Promise<void> {
   reconciling = true
   try {
     for (const [tabId, state] of [...paneState.entries()]) {
+      const crashed = crashedTabs.get(tabId)
+      if (crashed !== undefined) {
+        // Hold the crashed tab: automatic resurrection was the flicker loop.
+        continue
+      }
       const session = sessions.get(tabId)
       if (!state.visible) {
         if (session !== undefined) position(session, false)
@@ -371,6 +379,23 @@ async function reconcile(): Promise<void> {
   } finally {
     reconciling = false
   }
+}
+
+/** Human asked to restore a crashed tab: forget the crash and rebuild it. */
+export function restoreCrashedTab(tabId: string): boolean {
+  const crashed = crashedTabs.get(tabId)
+  if (crashed === undefined) return false
+  crashedTabs.delete(tabId)
+  const state = paneState.get(tabId)
+  paneState.set(tabId, { url: crashed.url, host: state?.host ?? null, visible: true })
+  setStatus('восстанавливаю страницу после падения')
+  scheduleReconcile()
+  return true
+}
+
+/** Crash info for one tab (used by the panel's restore chip). */
+export function crashedInfo(tabId: string): { url: string; reason: string; at: number } | null {
+  return crashedTabs.get(tabId) ?? null
 }
 
 /** Try to front one of our tabs after a deferred creation. */
@@ -699,7 +724,8 @@ function handleGuestLoss(session: Session, kind: string): void {
     } catch {
       // already gone
     }
-    setStatus(`рендерер упал (${kind}) — вкладка закрыта, откройте её заново ⌘T`)
+    crashedTabs.set(session.tabId, { url: session.url, reason: kind, at: Date.now() })
+    setStatus(`рендерер упал (${kind}) — страница остановлена, нажмите «Восстановить» в панели`)
     void note('guest:crashed', { tabId: session.tabId, kind, url: session.url.slice(0, 120) })
     notify()
     return

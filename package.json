@@ -46,6 +46,8 @@
     "check-imports": "node scripts/check-client-imports.mjs",
     "check-tools": "node scripts/check-tools.mjs",
     "gate": "npm run selftest && echo GATE OK",
-    "gate:live": "npm run gate && node scripts/live-check.mjs"
+    "gate:live": "npm run gate && node scripts/live-check.mjs",
+    "soak": "node scripts/soak.mjs",
+    "soak:short": "node scripts/soak.mjs --minutes=2"
   }
 }

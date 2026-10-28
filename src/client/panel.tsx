@@ -33,6 +33,8 @@ import {
   runInActive,
   setEvidence,
   setPaneState,
+  restoreCrashedTab,
+  crashedInfo,
   setSessionRect,
   setStatus,
   setViewHooks,
@@ -53,6 +55,8 @@ const STYLES = `
 .dsh-startapus-browser-address { flex:1; min-width:0; height:26px; padding:0 8px; border:1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius:6px; background:transparent; color:inherit; font:inherit; outline:none; }
 .dsh-startapus-browser-status { padding:4px 10px 8px; opacity:0.72; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-startapus-browser-host { flex:1; min-height:0; }
+.dsh-startapus-browser-crash { position:absolute; top:34px; left:8px; right:8px; z-index:6; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; border-radius:6px; font-size:11px; background:color-mix(in srgb, #d9534f 28%, #111 72%); box-shadow:0 2px 10px rgba(0,0,0,0.3); }
+.dsh-startapus-browser-crash button { font-size:11px; padding:2px 8px; cursor:pointer; }
 .dsh-startapus-browser-control { position:absolute; top:34px; left:8px; right:8px; z-index:5; display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; font-size:11px; background:color-mix(in srgb, #f5a623 22%, #111 78%); box-shadow:0 2px 10px rgba(0,0,0,0.25); }
 .dsh-startapus-browser-control button { border:1px solid currentColor; border-radius:5px; background:transparent; color:inherit; font:inherit; padding:2px 8px; cursor:pointer; }
 `
@@ -259,6 +263,18 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           <FiCrosshair />
         </button>
       </div>
+      {(() => {
+        const crash = crashedInfo(tabKey)
+        if (crash === null) return null
+        return (
+          <div className="dsh-startapus-browser-crash" role="alert">
+            <span>страница остановлена: {crash.reason}. Адрес сохранён.</span>
+            <button type="button" onClick={() => restoreCrashedTab(tabKey)}>
+              Восстановить
+            </button>
+          </div>
+        )
+      })()}
       {(snapshot.agentActive || snapshot.control === 'human') && (
         <div className="dsh-startapus-browser-control">
           <span>
