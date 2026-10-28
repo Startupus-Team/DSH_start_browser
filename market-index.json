@@ -2,18 +2,21 @@
   "format": 1,
   "title": {
     "en": "Startapus plugins",
-    "ru": "Плагины Startapus"
+    "ru": "Плагины Startapus",
+    "zh": "Startapus 插件"
   },
   "description": {
     "en": "Bundles published for DSH by Startapus.",
-    "ru": "Бандлы для DSH, опубликованные Startapus."
+    "ru": "Бандлы для DSH, опубликованные Startapus.",
+    "zh": "由 Startapus 发布、适用于 DSH 的插件包。"
   },
   "metadata": {
     "categories": {
       "browser": {
         "title": {
           "en": "Browser",
-          "ru": "Браузер"
+          "ru": "Браузер",
+          "zh": "浏览器"
         }
       }
     }
@@ -23,11 +26,13 @@
       "name": "startapus-browser",
       "title": {
         "en": "Startapus Browser",
-        "ru": "Startapus Browser"
+        "ru": "Startapus Browser",
+        "zh": "Startapus 浏览器"
       },
       "description": {
         "en": "A real webview browser tab in the DSH right sidebar with agent tools and an element picker.",
-        "ru": "Настоящий браузер во правой панели DSH: агентские инструменты и пикер элементов."
+        "ru": "Настоящий браузер в правой панели DSH: агентские инструменты и пикер элементов.",
+        "zh": "DSH 右侧边栏中的真实 webview 浏览器标签页，内置智能体工具与页面元素选择器。"
       },
       "icon": "./icon.svg",
       "metadata": {
@@ -42,11 +47,11 @@
       "versions": [
         {
           "version": "0.25.0",
-          "publishTimestamp": 1793204572,
+          "publishTimestamp": 1793204633,
           "source": {
             "type": "git",
             "url": "https://github.com/Startupus-Team/DSH_start_browser",
-            "commit": "3976c49570ac0ca9ebb7bda3ea2d109452ed4d9b"
+            "commit": "a06a34ba01b0b214dca90eb7d381f24a1b879614"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.3 <0.3.0"
