@@ -1134,7 +1134,7 @@ export function startEngine(): () => void {
         if (command.kind === 'open' && typeof command.args.url === 'string') {
           const targetUrl = String(command.args.url)
           const keySession = sessions.get(activeTabId ?? '')
-          const view = activeGuest()
+          const view = await readyView(command)
           if (keySession !== undefined && !keySession.ready) {
             // `loadURL` before `dom-ready` throws inside Electron: remember it.
             keySession.pendingUrl = targetUrl
