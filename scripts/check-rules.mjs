@@ -315,8 +315,14 @@ check('R14: критерии приёмки — контраст, перепол
   return 'контраст 21.00 / 4.54 / альфа / фон-картинка → UNMEASURABLE; переполнение; in-viewport'
 })
 
+check('R15: тема запоминается только для dark/light', () => {
+  expect(rules.rememberedScheme('dark') === 'dark' && rules.rememberedScheme('light') === 'light', 'dark/light не запомнены')
+  expect(rules.rememberedScheme('auto') === null && rules.rememberedScheme(undefined) === null && rules.rememberedScheme('sepia') === null, 'auto/мусор запомнены')
+  return 'auto сбрасывает запомненный режим'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 14/14')
+console.log('RULES OK: 15/15')

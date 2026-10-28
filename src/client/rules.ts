@@ -174,3 +174,8 @@ export function diffPixels(
 export function captureKey(tabId: string, selector: string): string {
   return `${tabId === '' ? '*' : tabId}|${selector}`
 }
+
+/** Colour scheme a session keeps re-applying after navigations; `auto` forgets it. */
+export function rememberedScheme(mode: unknown): 'dark' | 'light' | null {
+  return mode === 'dark' || mode === 'light' ? mode : null
+}

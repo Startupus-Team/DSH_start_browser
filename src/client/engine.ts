@@ -12,7 +12,7 @@
 
 import type { ElementPick } from './element-refs.ts'
 import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript } from './verify-scripts'
-import { captureKey, cropRect as clampCropRect, diffPixels, normalizeAddress, normalizeWait, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
+import { captureKey, cropRect as clampCropRect, diffPixels, normalizeAddress, normalizeWait, pickSessionToEvict, rememberedScheme, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
 import { INSTANCE_ID, lastHostRev, note, poll, probe, report, setReportMeta, setTab } from './transport'
@@ -59,6 +59,8 @@ interface Session {
   lastRecoveryAt: number
   /** The first navigation already happened; later dom-ready events must not repeat it. */
   navigated: boolean
+  /** Emulated colour scheme, re-applied after every document load. */
+  colorScheme: 'dark' | 'light' | null
 }
 
 export interface EngineState {
@@ -609,6 +611,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     recoveryAttempts: 0,
     lastRecoveryAt: 0,
     navigated: false,
+    colorScheme: null,
   }
   sessions.set(tabId, session)
   notify()
@@ -630,8 +633,19 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     created.setAttribute('src', `about:blank#${reservation.lease}`)
     created.style.cssText = 'display:flex;flex:1 1 auto;min-height:0;width:100%;height:100%;border:none;'
 
+    // Emulated colour scheme lives in the page, so every new document needs it again.
+    const reapplyScheme = (): void => {
+      if (session.colorScheme === null) return
+      try {
+        void Promise.resolve(created.executeJavaScript?.(colorSchemeScript(session.colorScheme), false)).catch(() => undefined)
+      } catch {
+        // Electron throws synchronously while the guest is not attached yet.
+      }
+    }
+    created.addEventListener('did-finish-load', reapplyScheme)
     created.addEventListener('dom-ready', () => {
       session.ready = true
+      reapplyScheme()
       // `dom-ready` fires for every document, so navigating here unconditionally
       // makes the page reload forever. Navigate exactly once.
       if (session.navigated) {
@@ -1606,6 +1620,9 @@ export function startEngine(): () => void {
               const parsed = typeof raw === 'string' ? JSON.parse(raw) as Record<string, unknown> : {}
               if (parsed.status === 'ERROR') await report(base as string, { schemeResult: { error: String(parsed.message ?? 'ошибка'), at: Date.now() } })
               else {
+                for (const candidate of sessions.values()) {
+                  if (candidate.guest === view) candidate.colorScheme = rememberedScheme(mode)
+                }
                 await report(base as string, { schemeResult: { ...parsed, at: Date.now() } })
                 setStatus(`тема страницы: ${mode}`)
               }

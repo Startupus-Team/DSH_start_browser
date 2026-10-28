@@ -1675,7 +1675,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
     patchedRules: result.patchedRules ?? 0,
     skippedSheets: result.skippedSheets ?? 0,
     approximate: true,
-    hint: 'эмуляция приблизительная: стили чужих доменов без CORS пропущены; после перезагрузки вызовите снова; auto — сброс',
+    hint: 'эмуляция приблизительная: стили чужих доменов без CORS пропущены; режим повторно применяется после навигации и перезагрузки; auto — сброс',
     commandId: command.id,
   }, 'color_scheme')
 }
@@ -1992,7 +1992,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         zoom: { type: 'number', description: 'Масштаб 0.5–2; без значения — только чтение' },
         width: { type: 'number', description: 'Целевая ширина вьюпорта в CSS px (240–2400) — подбирается масштабом' },
         preset: { type: 'string', enum: ['mobile', 'tablet', 'desktop'], description: 'Пресет ширины: mobile 390, tablet 768, desktop 1280 (сброс к 1x)' },
-        colorScheme: { type: 'string', enum: ['dark', 'light', 'auto'], description: 'Эмуляция prefers-color-scheme для текущей страницы: dark | light | auto (сброс). Приблизительная, без CDP: переписывает media-запросы доступных стилей и matchMedia; после перезагрузки страницы вызовите снова' },
+        colorScheme: { type: 'string', enum: ['dark', 'light', 'auto'], description: 'Эмуляция prefers-color-scheme для текущей страницы: dark | light | auto (сброс). Приблизительная, без CDP: переписывает media-запросы доступных стилей и matchMedia; режим запоминается за вкладкой и применяется после навигации' },
         tabId: tabIdParam,
       }, []),
       output: output(asText),
