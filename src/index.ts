@@ -210,6 +210,11 @@ const CAPABILITIES = [
 const MAX_BODY = 512 * 1024
 // Long-poll holds up to 15 s, so a healthy panel can be silent between reports.
 const CLIENT_TTL_MS = 15_000
+/**
+ * How long a tool waits for the panel's answer. The panel may spend up to 3 s getting the
+ * guest ready, up to 6 s inside the page, and sees the command only on its next poll (≤2.5 s).
+ */
+const PANEL_REPLY_MS = 12_000
 const TASK_LIMIT = 200
 /** Consecutive failed verifications after which the task stops retrying. */
 const MAX_VERIFY_ATTEMPTS = 3
@@ -1659,7 +1664,7 @@ function untrusted<T>(data: T, source = 'page'): { trust: { untrusted: true; sou
 }
 
 /** Wait until the renderer reports a fresh value for a page field. */
-async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitResult' | 'schemeResult' | 'jsResult' | 'navResult', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
+async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitResult' | 'schemeResult' | 'jsResult' | 'navResult', since: number, timeoutMs = PANEL_REPLY_MS): Promise<Record<string, unknown>> {
   for (let waited = 0; waited < timeoutMs; waited += 100) {
     const value = client[field]
     if (value !== null && typeof value.at === 'number' && value.at >= since) {
@@ -1668,7 +1673,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitRes
     }
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
-  throw new Error(`E_TIMEOUT: ${field} не пришёл за ${timeoutMs / 1000} с`)
+  fail('E_TIMEOUT', `${field} не пришёл за ${timeoutMs / 1000} с`, 'панель занята (тяжёлая страница или длинное ожидание) или скрыта — проверьте ui_status (panelStatus, hidden) и повторите')
 }
 
 /** Wait for the screenshot a `ui_screenshot { wait }` call queued; the file is read with `read_image`. */
@@ -1698,7 +1703,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
   requireTransport()
   const since = Date.now()
   const command = enqueue('color_scheme', { ...(tabId === '' ? {} : { tabId }), mode })
-  const result = await waitForField('schemeResult', since, 6000)
+  const result = await waitForField('schemeResult', since)
   return untrusted({
     mode: result.mode ?? mode,
     patchedRules: result.patchedRules ?? 0,
@@ -1906,7 +1911,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         const tabId = String(args.tabId ?? '')
         const since = Date.now()
         const command = enqueue('navigate', { action, ...(tabId === '' ? {} : { tabId }) })
-        const result = await waitForField('navResult', since, 6000)
+        const result = await waitForField('navResult', since)
         return untrusted({
           ok: result.ok === true,
           action,
@@ -2121,7 +2126,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         const command = enqueue('read_page', tabId === '' ? { limit } : { limit, tabId })
         // The panel answers asynchronously; waiting here keeps the tool honest —
         // otherwise the agent gets "queued" and has to guess with ui_find.
-        for (let waited = 0; waited < 40; waited += 1) {
+        for (let waited = 0; waited < PANEL_REPLY_MS / 100; waited += 1) {
           const scan = client.pageScan
           if (scan !== null && scan.at >= requestedAt) {
             if (scan.error !== '') throw new Error(`E_SCAN: ${scan.error}`)
@@ -2134,7 +2139,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
           }
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
-        fail('E_TIMEOUT', `обзор не пришёл за 4 с (команда ${command.id})`, 'повторите ui_read_page')
+        fail('E_TIMEOUT', `обзор не пришёл за ${PANEL_REPLY_MS / 1000} с (команда ${command.id})`, 'панель занята или скрыта — проверьте ui_status и повторите ui_read_page')
       },
     },
     {
@@ -2279,7 +2284,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         const tabId = String(args.tabId ?? '')
         const since = Date.now()
         const command = enqueue('js', { ...(tabId === '' ? {} : { tabId }), code })
-        const result = await waitForField('jsResult', since, 12_000)
+        const result = await waitForField('jsResult', since, 14_000)
         if (result.status === 'ERROR') throw new Error(`E_JS: ${String(result.message ?? 'ошибка выполнения')}`)
         let value: unknown = null
         try {
