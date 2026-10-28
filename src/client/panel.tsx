@@ -59,6 +59,7 @@ interface PanelProps {
   sessionId?: string
   params?: { url?: string }
   onClose?: () => boolean
+  onOpenTab?: (url: string) => boolean
   onPick?: (pick: ElementPick) => unknown
 }
 
@@ -161,6 +162,7 @@ function PanelChrome(props: PanelProps): React.ReactNode {
     setViewHooks({
       pickRequested: () => togglePick(),
       closeRequested: () => props.onClose?.() === true,
+      openTabRequested: (url) => props.onOpenTab?.(url) === true,
     })
   }, [togglePick, props])
 

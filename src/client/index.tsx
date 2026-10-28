@@ -199,7 +199,12 @@ export function apply(ctx: ClientContext): void {
       // that flag, otherwise the last mounted panel wins and switching back to an
       // earlier tab shows an empty pane.
       const tabVisible = (info?.tab as { visible?: unknown } | undefined)?.visible === true
-      const actions = (props as { actions?: { closeTab?: (sessionId: string, tabId: string) => void } }).actions
+      const actions = (props as {
+        actions?: {
+          closeTab?: (sessionId: string, tabId: string) => void
+          openTab?: (kind: string, options?: { params?: Record<string, unknown>; revealIfOpened?: boolean }) => unknown
+        }
+      }).actions
       const sessionId = props?.sessionId
       const onClose = (): boolean => {
         try {
@@ -210,11 +215,21 @@ export function apply(ctx: ClientContext): void {
           return false
         }
       }
+      const onOpenTab = (url: string): boolean => {
+        try {
+          if (actions?.openTab === undefined) return false
+          actions.openTab(TAB_KIND, url === '' ? {} : { params: { url } })
+          return true
+        } catch {
+          return false
+        }
+      }
       return (
       <StartapusBrowserPanel
         tabKey={tabId}
         visible={tabVisible}
         onClose={onClose}
+        onOpenTab={onOpenTab}
         params={requestedUrl === undefined ? undefined : { url: requestedUrl }}
         sessionId={props?.sessionId}
         onPick={(pick: ElementPick): PickResult => {

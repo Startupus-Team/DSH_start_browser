@@ -89,6 +89,8 @@ let misses = 0
 let base: string | null = null
 let closeRequested: () => boolean = () => false
 let pickRequested: () => void = () => undefined
+/** Opening a tab through the pane's own bound actions (falls back to the controller). */
+let openTabRequested: ((url: string) => boolean) | null = null
 const listeners = new Set<() => void>()
 /** Panes currently mounted, by tab key (double mounts do not inflate the count). */
 const mountedPaneKeys = new Set<string>()
@@ -176,9 +178,14 @@ export function setEvidence(pick: ElementPick | null): void {
 }
 
 /** Picker/crop request hooks installed by the view. */
-export function setViewHooks(hooks: { closeRequested?: () => boolean; pickRequested?: () => void }): void {
+export function setViewHooks(hooks: {
+  closeRequested?: () => boolean
+  pickRequested?: () => void
+  openTabRequested?: (url: string) => boolean
+}): void {
   if (hooks.closeRequested !== undefined) closeRequested = hooks.closeRequested
   if (hooks.pickRequested !== undefined) pickRequested = hooks.pickRequested
+  if (hooks.openTabRequested !== undefined) openTabRequested = hooks.openTabRequested
 }
 
 function memoryOf(session: Session | undefined): { url: string; scrollY: number; restoreScroll: boolean } {
@@ -656,10 +663,17 @@ export function startEngine(): void {
           if (!closed) setStatus('закрыть вкладку не удалось: нет доступа к actions.closeTab')
         } else if (command.kind === 'new_tab') {
           const target = String(command.args.url ?? '')
-          const result = openStartapusTab('startapus-browser', target === '' ? {} : { url: target })
+          // Prefer the pane's bound actions: a controller-level open can create a
+          // tab that the kernel never activates (no session binding).
+          const viaPane = openTabRequested === null ? false : openTabRequested(target)
+          const result = viaPane
+            ? { opened: true, error: '' }
+            : openStartapusTab('startapus-browser', target === '' ? {} : { url: target })
           await report(base as string, { newTabResult: { opened: result.opened, url: target, error: result.error } })
           setStatus(result.opened
-            ? `открыта новая вкладка${target === '' ? '' : `: ${target}`}`
+            ? (viaPane
+              ? `открыта новая вкладка${target === '' ? '' : `: ${target}`}`
+              : `вкладка открыта общим контроллером${target === '' ? '' : ` (${target})`}: если панель не появилась — выберите вкладку в полосе`)
             : `новая вкладка не открылась: ${result.error}`)
         } else if (command.kind === 'console_clear') {
           consoleRing.length = 0
