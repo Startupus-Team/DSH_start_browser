@@ -11,7 +11,7 @@
  */
 
 import type { ElementPick } from './element-refs.ts'
-import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript } from './verify-scripts'
+import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript, netHookScript } from './verify-scripts'
 import { captureKey, cropRect as clampCropRect, diffPixels, normalizeAddress, normalizeWait, pickSessionToEvict, rememberedScheme, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
@@ -635,8 +635,10 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
 
     // Emulated colour scheme lives in the page, so every new document needs it again.
     const reapplyScheme = (): void => {
-      if (session.colorScheme === null) return
       try {
+        // Per-document hooks: the network recorder always, the colour scheme when one is emulated.
+        void Promise.resolve(created.executeJavaScript?.(netHookScript(), false)).catch(() => undefined)
+        if (session.colorScheme === null) return
         void Promise.resolve(created.executeJavaScript?.(colorSchemeScript(session.colorScheme), false)).catch(() => undefined)
       } catch {
         // Electron throws synchronously while the guest is not attached yet.

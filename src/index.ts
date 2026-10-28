@@ -72,7 +72,7 @@ interface ClientState {
   viewport: { width: number; height: number } | null
   evidence: Record<string, unknown> | null
   console: Array<Record<string, unknown>>
-  crop: { bytes: number; width: number; height: number; path: string; diff?: Record<string, unknown> } | null
+  crop: { bytes: number; width: number; height: number; path: string; at: number; diff?: Record<string, unknown> } | null
   area: Record<string, unknown> | null
   lastAct: { op: string; status: string; message: string } | null
   lastSelect: { selector: string; status: string; count: number } | null
@@ -1209,6 +1209,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
               width: typeof crop.width === 'number' ? crop.width : 0,
               height: typeof crop.height === 'number' ? crop.height : 0,
               path: file,
+              at: Date.now(),
               ...(typeof crop.diff === 'object' && crop.diff !== null ? { diff: crop.diff as Record<string, unknown> } : {}),
             }
             probe('crop:saved', { bytes: crop.bytes, path: file })
@@ -1667,6 +1668,28 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitRes
   throw new Error(`E_TIMEOUT: ${field} не пришёл за ${timeoutMs / 1000} с`)
 }
 
+/** Wait for the screenshot a `ui_screenshot { wait }` call queued; the file is read with `read_image`. */
+async function waitForCapture(commandId: string, since: number): Promise<Record<string, unknown>> {
+  for (let waited = 0; waited < 10_000; waited += 100) {
+    const crop = client.crop
+    if (crop !== null && crop.at >= since) {
+      return {
+        captured: true,
+        path: crop.path,
+        width: crop.width,
+        height: crop.height,
+        bytes: crop.bytes,
+        ...(crop.diff === undefined ? {} : { diff: crop.diff }),
+        hint: 'откройте снимок штатным read_image с этим path',
+        commandId,
+      }
+    }
+    if (client.captureError !== null) fail('E_CAPTURE', client.captureError, 'проверьте, что вкладка видима, и повторите')
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  fail('E_TIMEOUT', `снимок не пришёл за 10 с (команда ${commandId})`, 'откройте вкладку Startapus и повторите')
+}
+
 /** Queue a colour-scheme change and wait for the renderer's report. */
 async function applyColorScheme(mode: string, tabId: string): Promise<Record<string, unknown>> {
   requireTransport()
@@ -1697,10 +1720,11 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
   return [
     {
       name: 'ui_console',
-      description: 'Консоль страницы с фильтром по уровню и очисткой. Кольцевой буфер 30 записей, приходит с каждого отчёта панели.',
+      description: 'Консоль страницы с фильтром по уровню и тексту (pattern) и очисткой. Буфер до 200 записей, приходит с каждого отчёта панели.',
       parameters: objectSchema({
         level: { type: 'string', enum: ['error', 'warning', 'info', 'log'], description: 'Фильтр уровня' },
         limit: { type: 'number', description: 'Сколько вернуть, до 200' },
+        pattern: { type: 'string', description: 'Подстрока в тексте записи (без учёта регистра)' },
         clear: { type: 'boolean', description: 'Очистить буфер в панели и на host' },
       }, []),
       output: output(asText),
@@ -1712,7 +1736,9 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         }
         const levelName = typeof args.level === 'string' ? args.level : ''
         const limit = typeof args.limit === 'number' ? Math.min(200, Math.max(1, args.limit)) : 200
+        const needle = typeof args.pattern === 'string' ? args.pattern.toLowerCase() : ''
         const rows = client.console.filter((row) => {
+          if (needle !== '' && !String(row.message ?? '').toLowerCase().includes(needle)) return false
           if (levelName === '') return true
           const level = Number(row.level ?? 0)
           // Electron console levels: 0 verbose, 1 info, 2 warning, 3 error.
@@ -2151,7 +2177,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
     },
     {
       name: 'ui_network',
-      description: 'Ресурсы страницы по данным PerformanceObserver: URL, тип, длительность, размер; помечает медленные (≥400 мс) и тяжёлые (≥200 КБ).',
+      description: 'Ресурсы страницы (PerformanceObserver: URL, тип, длительность, размер; медленные ≥400 мс и тяжёлые ≥200 КБ) и исходы fetch/XHR со статусами (requests, failedRequests: 4xx/5xx/сбой сети). Запись fetch/XHR ведётся с загрузки документа хуком панели.',
       parameters: objectSchema({
         limit: { type: 'number', description: 'Сколько последних записей вернуть, 10–200 (по умолчанию 100)' },
         tabId: tabIdParam,
@@ -2164,7 +2190,17 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         const since = Date.now()
         const command = enqueue('network', { ...(tabId === '' ? {} : { tabId }), limit })
         const result = await waitForField('network', since)
-        return untrusted({ total: result.total ?? 0, slow: result.slow ?? 0, heavy: result.heavy ?? 0, entries: result.entries ?? [], commandId: command.id }, 'network')
+        return untrusted({
+          total: result.total ?? 0,
+          slow: result.slow ?? 0,
+          heavy: result.heavy ?? 0,
+          entries: result.entries ?? [],
+          // fetch/XHR outcomes with status codes; recorded from the moment the document loaded
+          hooked: result.hooked === true,
+          requests: result.requests ?? [],
+          failedRequests: result.failedRequests ?? 0,
+          commandId: command.id,
+        }, 'network')
       },
     },
     {
@@ -2362,9 +2398,10 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
     },
     {
       name: 'ui_screenshot',
-      description: 'Снять снимок страницы (или элемента) по команде агента. Пиксели в модель не передаются: возвращаются метаданные и путь к файлу, который открывает человек.',
+      description: 'Снять снимок страницы (или элемента). Пиксели в ответ не встраиваются: файл сохраняется на диск, а увидеть его модель может штатным read_image по path. С wait:true инструмент дожидается снимка и сразу возвращает path, размеры и diff; без wait — только ставит команду (результат в ui_status.crop).',
       parameters: objectSchema({
         selector: { type: 'string', description: 'Селектор элемента; пусто — весь видимый экран' },
+        wait: { type: 'boolean', description: 'Дождаться снимка (до 10 с) и вернуть path/размеры/diff; затем read_image(path)' },
         diff: { type: 'boolean', description: 'Сравнить с предыдущим снимком той же цели (вкладка + селектор): доля изменившихся пикселей и рамка изменений — в ui_status.crop.diff. Первый вызов только запоминает снимок' },
         tabId: tabIdParam,
       }, []),
@@ -2373,7 +2410,10 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         requireTransport()
         const selector = String(args.selector ?? '')
         const tabId = String(args.tabId ?? '')
+        const since = Date.now()
+        if (args.wait === true) client.captureError = null
         const command = enqueue('capture', { selector, ...(tabId === '' ? {} : { tabId }), ...(args.diff === true ? { diff: true } : {}) })
+        if (args.wait === true) return waitForCapture(command.id, since)
         return {
           queued: true,
           commandId: command.id,
@@ -3227,6 +3267,45 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     commands.length = 0
     client.control = null
     results.push({ name: 'P3-5: ui_navigate и ui_act hover/select/check', pass: false, detail: String(error) })
+  }
+
+  // ui_screenshot { wait } returns the saved file; ui_console { pattern } narrows the ring.
+  try {
+    seedTransport()
+    commands.length = 0
+    const waiting = call('ui_screenshot', { selector: '#hero', wait: true }) as Promise<Record<string, unknown>>
+    if (commands[commands.length - 1]?.kind !== 'capture') throw new Error('capture не поставлен')
+    await handleRoute(fakeRequest({
+      crop: { bytes: 6, width: 120, height: 40, base64: Buffer.from('shot-2').toString('base64'), mime: 'image/png' },
+    }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const shot = await waiting
+    const shotPath = String(shot.path ?? '')
+    if (shot.captured !== true || shotPath === '' || !existsSync(shotPath) || shot.width !== 120 || !String(shot.hint).includes('read_image')) {
+      throw new Error(`wait вернул ${JSON.stringify(shot)}`)
+    }
+    rmSync(shotPath, { force: true })
+    commands.length = 0
+
+    const failing = call('ui_screenshot', { wait: true }) as Promise<unknown>
+    await handleRoute(fakeRequest({ captureError: 'capturePage отсутствует у гостя' }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    await rejects('E_CAPTURE', () => failing)
+    client.captureError = null
+    commands.length = 0
+
+    const savedConsole = client.console
+    client.console = [
+      { level: 3, message: 'Uncaught TypeError: x is undefined' },
+      { level: 1, message: 'loaded config' },
+      { level: 3, message: 'Failed to load resource: 404' },
+    ]
+    const both = unwrap<{ matched: number }>(call('ui_console', { pattern: 'FAILED', level: 'error' }))
+    const text = unwrap<{ matched: number }>(call('ui_console', { pattern: 'load' }))
+    client.console = savedConsole
+    if (both.matched !== 1 || text.matched !== 2) throw new Error(`console pattern: ${both.matched}/${text.matched}`)
+    results.push({ name: 'P3-6: ui_screenshot wait и ui_console pattern', pass: true, detail: 'wait → path+read_image; ошибка → E_CAPTURE; pattern+level' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P3-6: ui_screenshot wait и ui_console pattern', pass: false, detail: String(error) })
   }
 
   // Phase 2: typed failures carry a hint the agent can act on.

@@ -389,8 +389,53 @@ check('R17: ui_act — hover, select, check', () => {
   return 'hover-события, select по value/тексту/ошибки, check для native/radio/aria'
 })
 
+const hookWorld = async () => {
+  class FakeXhr {
+    constructor() { this.listeners = {}; this.status = 0 }
+    open() {}
+    send() {}
+    addEventListener(name, fn) { this.listeners[name] = fn }
+    finish(status) { this.status = status; this.listeners.loadend?.() }
+  }
+  const context = {
+    performance: { now: () => 1000, getEntriesByType: () => [] },
+    fetch: (input) => (String(input).includes('boom') ? Promise.reject(new Error('Failed to fetch')) : Promise.resolve({ status: String(input).includes('missing') ? 404 : 200, ok: !String(input).includes('missing') })),
+    XMLHttpRequest: FakeXhr,
+  }
+  context.window = context
+  const installed = JSON.parse(vm.runInNewContext(scripts.netHookScript(), context))
+  const again = JSON.parse(vm.runInNewContext(scripts.netHookScript(), context))
+  await context.fetch('https://x.test/ok')
+  await context.fetch('https://x.test/missing', { method: 'post' })
+  await context.fetch('https://x.test/boom').catch(() => undefined)
+  const xhr = new context.XMLHttpRequest()
+  xhr.open('get', 'https://x.test/xhr')
+  xhr.send()
+  xhr.finish(500)
+  const report = JSON.parse(vm.runInNewContext(scripts.networkScript(50), context))
+  return { installed, again, report }
+}
+const hooked = await hookWorld()
+check('R18: ui_network — статусы fetch/XHR через хук', () => {
+  expect(hooked.installed.installed === true && hooked.again.installed === false, `идемпотентность: ${JSON.stringify([hooked.installed, hooked.again])}`)
+  const { report } = hooked
+  expect(report.hooked === true && report.requests.length === 4, JSON.stringify(report.requests))
+  const [ok, missing, boom, xhr] = report.requests
+  expect(ok.status === 200 && ok.ok === true && ok.method === 'GET', JSON.stringify(ok))
+  expect(missing.status === 404 && missing.method === 'POST', JSON.stringify(missing))
+  expect(boom.status === 0 && boom.error === 'Failed to fetch', JSON.stringify(boom))
+  expect(xhr.kind === 'xhr' && xhr.status === 500 && xhr.method === 'GET', JSON.stringify(xhr))
+  expect(report.failedRequests === 3, `failedRequests=${report.failedRequests}`)
+  return '200/404/сбой/XHR 500 → 3 неудачных, повторная установка не дублирует хук'
+})
+check('R19: networkScript без хука не падает', () => {
+  const plain = JSON.parse(vm.runInNewContext(scripts.networkScript(10), { performance: { getEntriesByType: () => [{ name: 'a', initiatorType: 'img', duration: 500, transferSize: 300000, startTime: 1 }] }, window: {} }))
+  expect(plain.hooked === false && plain.requests.length === 0 && plain.slow === 1 && plain.heavy === 1, JSON.stringify(plain))
+  return 'hooked=false, resource timing сохранён'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 17/17')
+console.log('RULES OK: 19/19')

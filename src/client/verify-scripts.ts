@@ -436,7 +436,10 @@ export function networkScript(limit: number): string {
       }));
       const slow = rows.filter((row) => row.durationMs >= 400).length;
       const heavy = rows.filter((row) => row.transferBytes >= 200000).length;
-      return JSON.stringify({ status: 'OK', total: rows.length, slow, heavy, entries: rows.slice(-MAX) });
+      const hook = window.__startapusNet;
+      const requests = hook && Array.isArray(hook.log) ? hook.log.slice(-MAX) : [];
+      const failedRequests = requests.filter((row) => row.error || row.status >= 400 || row.status === 0).length;
+      return JSON.stringify({ status: 'OK', total: rows.length, slow, heavy, entries: rows.slice(-MAX), hooked: !!hook, requests, failedRequests });
     } catch (error) {
       return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
     }
@@ -595,6 +598,53 @@ ${code}
       if (json === undefined) json = 'null';
       const MAX = ${max};
       return JSON.stringify({ status: 'OK', json: json.slice(0, MAX), truncated: json.length > MAX });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
+
+/**
+ * Record `fetch` and XMLHttpRequest outcomes (status, timing, errors) of the
+ * current document into `window.__startapusNet`. Resource Timing has no status
+ * codes, so this hook is the only way to see 404/500 and failed calls. It is
+ * idempotent and keeps the last 200 entries; the page can observe the wrapper.
+ */
+export function netHookScript(): string {
+  return `(() => {
+    try {
+      const w = window;
+      if (w.__startapusNet) return JSON.stringify({ status: 'OK', installed: false });
+      const hook = (w.__startapusNet = { log: [] });
+      const push = (row) => { hook.log.push(row); if (hook.log.length > 200) hook.log.shift(); };
+      const clip = (text) => String(text).slice(0, 300);
+      if (typeof w.fetch === 'function') {
+        const original = w.fetch;
+        w.fetch = function (input, init) {
+          const started = performance.now();
+          const method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+          const url = clip(typeof input === 'string' ? input : (input && input.url) || input);
+          return original.apply(this, arguments).then(
+            (response) => { push({ kind: 'fetch', method, url, status: response.status, ok: response.ok, ms: Math.round(performance.now() - started) }); return response; },
+            (error) => { push({ kind: 'fetch', method, url, status: 0, ok: false, ms: Math.round(performance.now() - started), error: clip(error && error.message ? error.message : error) }); throw error; },
+          );
+        };
+      }
+      if (typeof w.XMLHttpRequest === 'function') {
+        const proto = w.XMLHttpRequest.prototype;
+        const open = proto.open;
+        const send = proto.send;
+        proto.open = function (method, url) { this.__startapus = { method: String(method).toUpperCase(), url: clip(url) }; return open.apply(this, arguments); };
+        proto.send = function () {
+          const meta = this.__startapus || { method: 'GET', url: '' };
+          const started = performance.now();
+          this.addEventListener('loadend', () => {
+            push({ kind: 'xhr', method: meta.method, url: meta.url, status: this.status, ok: this.status >= 200 && this.status < 400, ms: Math.round(performance.now() - started), ...(this.status === 0 ? { error: 'сеть/отмена' } : {}) });
+          });
+          return send.apply(this, arguments);
+        };
+      }
+      return JSON.stringify({ status: 'OK', installed: true });
     } catch (error) {
       return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
     }
