@@ -434,7 +434,10 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     created.addEventListener('did-fail-load', (event: Event) => {
       const detail = (event as CustomEvent<{ errorCode?: number; errorDescription?: string; validatedURL?: string; isMainFrame?: boolean }>).detail
       const code = Number(detail?.errorCode ?? 0)
-      if (code === -3) return
+      // -3: aborted by a newer navigation; 0: no error code at all (subframe or
+      // cancelled load). Neither is a failure of the page the user sees.
+      if (code === -3 || code === 0) return
+      if (detail?.isMainFrame === false) return
       counters.loadErrors += 1
       lastLoadError = {
         code,
