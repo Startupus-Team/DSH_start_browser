@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { StartapusBrowserPanel } from './panel.tsx'
 import { elementSource, insertElementRef, type ElementPick } from './element-refs.ts'
-import { requestOpenTab, startEngine } from './engine'
+import { noteShortcutState, requestOpenTab, shortcutHint, startEngine } from './engine'
 import { markTabClosing, registerTabsCloseHandler } from './tabs'
 import { setTabsApi } from './tabs'
 import { useTabTitle } from './tab-titles'
@@ -141,46 +141,52 @@ export function apply(ctx: ClientContext): void {
     // must never break activation
   }
 
-  // Best effort: also register the command in the shortcuts catalog so it is
-  // listed in Settings; the listener above is what actually opens the tab.
+  // Register the command in the shortcuts catalog (that is what draws the key on
+  // the guide card). `register` throws on reserved/conflicting defaults, so try a
+  // short list and report which one the kernel actually accepted.
   try {
     ctx.inject(['shortcuts'], (scope: ClientContext) => {
-      const shortcuts = (scope as unknown as {
+      const service = (scope as unknown as {
         shortcuts?: {
-          register?: (command: {
-            id: string
-            label: () => string
-            aliases?: string[]
-            defaults: Record<string, { code: string; modifiers: string[] }>
-            regions?: string[]
-            modals?: string[]
-            resolve: () => { status: string; run: () => void }
-          }) => () => void
+          register?: (command: Record<string, unknown>) => () => void
         }
       }).shortcuts
-      if (shortcuts === undefined || typeof shortcuts.register !== 'function') return
-      scope.effect(() => shortcuts.register?.({
-        id: 'startapus-browser.new',
-        label: () => 'Открыть Startapus Browser',
-        aliases: ['startapus', 'browser', 'открыть браузер'],
-        defaults: {
-          'desktop:macos': { code: 'KeyT', modifiers: ['primary'] },
-          'desktop:windows': { code: 'KeyT', modifiers: ['primary'] },
-          'web:macos': { code: 'KeyT', modifiers: ['primary'] },
-          'web:windows': { code: 'KeyT', modifiers: ['primary'] },
-        },
-        regions: ['page', 'editable'],
-        modals: [],
-        resolve: () => ({
-          status: 'handled',
-          run: () => {
-            requestOpenTab()
-          },
-        }),
-      }) ?? (() => undefined), 'startapus-browser: shortcut')
+      if (service === undefined || typeof service.register !== 'function') {
+        noteShortcutState({ id: 'startapus-browser.new', keys: '', ok: false, error: 'servicio shortcuts недоступен' })
+        return
+      }
+      const candidates: Array<{ keys: string; defaults: Record<string, { code: string; modifiers: string[] }> }> = [
+        { keys: 'Cmd+T', defaults: { 'desktop:macos': { code: 'KeyT', modifiers: ['primary'] } } },
+        { keys: 'Cmd+Shift+T', defaults: { 'desktop:macos': { code: 'KeyT', modifiers: ['primary', 'shift'] } } },
+        { keys: 'Cmd+Alt+B', defaults: { 'desktop:macos': { code: 'KeyB', modifiers: ['primary', 'alt'] } } },
+        { keys: 'Cmd+Shift+B', defaults: { 'desktop:macos': { code: 'KeyB', modifiers: ['primary', 'shift'] } } },
+      ]
+      let registered = false
+      let lastError = ''
+      for (const candidate of candidates) {
+        try {
+          scope.effect(() => service.register?.({
+            id: 'startapus-browser.new',
+            label: () => 'Открыть Startapus Browser',
+            aliases: ['startapus', 'browser', 'открыть браузер'],
+            defaults: candidate.defaults,
+            regions: ['page', 'editable'],
+            modals: [],
+            resolve: () => ({ status: 'handled', run: () => { requestOpenTab() } }),
+          }) ?? (() => undefined), 'startapus-browser: shortcut')
+          noteShortcutState({ id: 'startapus-browser.new', keys: candidate.keys, ok: true, error: '' })
+          registered = true
+          break
+        } catch (error) {
+          lastError = String(error instanceof Error ? error.message : error)
+        }
+      }
+      if (!registered) {
+        noteShortcutState({ id: 'startapus-browser.new', keys: '', ok: false, error: lastError })
+      }
     })
-  } catch {
-    // the shortcut is optional; it must never break activation
+  } catch (error) {
+    noteShortcutState({ id: 'startapus-browser.new', keys: '', ok: false, error: String(error) })
   }
 
   try {
@@ -228,7 +234,12 @@ export function apply(ctx: ClientContext): void {
       commandId: 'startapus-browser.new',
       order: 10,
       title: () => 'Startapus Browser',
-      description: () => '⌘T · браузер в правой панели: любые сайты, выделение элементов, агентские инструменты',
+      description: () => {
+        const hint = shortcutHint()
+        return hint === ''
+          ? 'Браузер в правой панели: любые сайты, выделение элементов, агентские инструменты'
+          : `${hint} · браузер в правой панели: любые сайты, выделение элементов`
+      },
       icon: StartapusArtwork,
     }],
   }

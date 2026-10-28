@@ -101,6 +101,8 @@ let openTabRequested: ((url: string) => boolean) | null = null
 /** Front a tab through the pane's bound actions. */
 let focusTabRequested: ((tabId: string) => boolean) | null = null
 /** Last address-bar attempt, reported so a silent failure becomes visible. */
+/** What the shortcuts catalog actually accepted (reported for diagnosis). */
+let shortcutState: { id: string; keys: string; ok: boolean; error: string } | null = null
 let lastNavAttempt: { url: string; ok: boolean; reason: string; hasGuest: boolean; hasLoadURL: boolean; at: number } | null = null
 const listeners = new Set<() => void>()
 /** Panes currently mounted, by tab key (double mounts do not inflate the count). */
@@ -161,6 +163,21 @@ function notify(): void {
 }
 
 /** Update the human-readable status line. */
+/** Remember the outcome of the shortcut registration. */
+export function noteShortcutState(state: { id: string; keys: string; ok: boolean; error: string }): void {
+  shortcutState = state
+  notify()
+}
+
+/**
+ * Shortcut text for the guide card description.
+ * Empty when the kernel owns the hint (catalog row registered) — otherwise the
+ * card still tells the user the working combination.
+ */
+export function shortcutHint(): string {
+  return shortcutState?.ok === true ? '' : '⌘T'
+}
+
 export function setStatus(next: string): void {
   status = next
   notify()
@@ -1060,6 +1077,7 @@ export function startEngine(): void {
         panels: mountedPaneKeys.size,
         panes: [...mountedPaneKeys],
         lastNavAttempt,
+        shortcutState,
         control: controlHolder,
         agentActive: Date.now() < agentActiveUntil,
       })

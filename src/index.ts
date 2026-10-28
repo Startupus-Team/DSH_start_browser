@@ -85,6 +85,7 @@ interface ClientState {
   panels: number | null
   panes: string[]
   lastNavAttempt: Record<string, unknown> | null
+  shortcutState: Record<string, unknown> | null
   control: 'agent' | 'human' | null
   agentActive: boolean
   panelStatus: string
@@ -286,6 +287,7 @@ function blankClient(): ClientState {
   panels: null,
   panes: [],
   lastNavAttempt: null,
+  shortcutState: null,
   control: null,
   agentActive: false,
   panelStatus: '',
@@ -923,6 +925,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         focusTabResult: client.focusTabResult,
         panes: client.panes,
         lastNavAttempt: client.lastNavAttempt,
+        shortcutState: client.shortcutState,
         control: client.control,
         agentActive: client.agentActive,
         engineActive: client.engineActive,
@@ -1001,6 +1004,10 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         probe('focustab:done', client.focusTabResult)
       }
       if (typeof body.panels === 'number') client.panels = body.panels
+      if (typeof body.shortcutState === 'object' && body.shortcutState !== null) {
+        client.shortcutState = body.shortcutState as Record<string, unknown>
+        probe('shortcut:state', client.shortcutState)
+      }
       if (typeof body.lastNavAttempt === 'object' && body.lastNavAttempt !== null) {
         client.lastNavAttempt = body.lastNavAttempt as Record<string, unknown>
       }
