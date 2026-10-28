@@ -15,7 +15,7 @@ import { actScript, coverageScript, evidenceScript, inspectScript, measureScript
 import { cropRect as clampCropRect, normalizeAddress, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
-import { poll, probe, report, setTab } from './transport'
+import { lastHostRev, poll, probe, report, setTab } from './transport'
 
 /** A webview element plus the Electron methods we call. */
 export interface GuestElement extends HTMLElement {
@@ -52,6 +52,8 @@ interface Session {
   lastActiveAt: number
   host: HTMLElement | null
   ready: boolean
+  /** Navigation requested before `dom-ready`; applied once the guest is ready. */
+  pendingUrl: string
   /** The first navigation already happened; later dom-ready events must not repeat it. */
   navigated: boolean
 }
@@ -93,6 +95,8 @@ let status = 'подготовка guest…'
 let stage = 'ready'
 let activeTabId: string | null = null
 let loopStarted = false
+/** Stops the live poll loop; the plugin's effect owns it, so HMR cannot leave a ghost. */
+let stopEngine: () => void = () => undefined
 let ticking = false
 let misses = 0
 let base: string | null = null
@@ -208,6 +212,14 @@ export function openInSession(tabId: string, rawUrl: string): { ok: boolean; rea
   }
   const session = sessions.get(tabId)
   const guest = session?.guest ?? activeGuest()
+  if (session !== undefined && !session.ready) {
+    // Calling loadURL before `dom-ready` throws inside Electron; remember it instead.
+    session.pendingUrl = normalized.url
+    lastNavAttempt = { url: normalized.url, ok: true, reason: 'отложено до dom-ready', hasGuest: true, hasLoadURL: true, at: Date.now() }
+    setStatus(`открою ${normalized.url} после готовности гостя`)
+    notify()
+    return { ok: true, reason: '', url: normalized.url }
+  }
   const hasLoadURL = typeof guest?.loadURL === 'function'
   if (guest === null || guest === undefined || !hasLoadURL) {
     const reason = guest === null || guest === undefined ? 'гость этой вкладки не создан' : 'у гостя нет loadURL'
@@ -385,6 +397,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     lastActiveAt: Date.now(),
     host,
     ready: false,
+    pendingUrl: '',
     navigated: false,
   }
   sessions.set(tabId, session)
@@ -416,7 +429,8 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
       }
       session.navigated = true
       const remembered = session.url.startsWith('about:blank') ? '' : session.url
-      const target = remembered === '' ? initialUrl : remembered
+      const target = session.pendingUrl !== '' ? session.pendingUrl : (remembered === '' ? initialUrl : remembered)
+      session.pendingUrl = ''
       counters.navigations += 1
       created.loadURL?.(target)
       setStatus(`guest подключён: ${target}`)
@@ -742,9 +756,9 @@ async function capturePageDataUrl(
   return { dataUrl: await cropDataUrl(fullUrl, rect, guest), source: 'canvas-crop' }
 }
 
-/** Start the single agent channel (idempotent). */
-export function startEngine(): void {
-  if (loopStarted) return
+/** Start the single agent channel (idempotent); returns the disposer its fiber owns. */
+export function startEngine(): () => void {
+  if (loopStarted) return stopEngine
   loopStarted = true
     const tick = async (): Promise<void> => {
       try {
@@ -769,13 +783,29 @@ export function startEngine(): void {
         misses = 0
       }
       const command = await poll(base as string)
+      if (lastHostRev !== '' && lastHostRev !== CLIENT_REV) {
+        setStatus(`клиент устарел: rev ${CLIENT_REV}, host ${lastHostRev} — перезапустите DSH`)
+      }
       if (command !== null) {
         await report(base as string, { lastCommand: { id: command.id, kind: command.kind, at: Date.now() } })
         if (command.kind === 'open' && typeof command.args.url === 'string') {
-          activeGuest()?.loadURL?.(String(command.args.url))
-          setStatus(`агент: открываю ${String(command.args.url)}`)
+          const targetUrl = String(command.args.url)
+          const keySession = sessions.get(activeTabId ?? '')
+          const view = activeGuest()
+          if (keySession !== undefined && !keySession.ready) {
+            // `loadURL` before `dom-ready` throws inside Electron: remember it.
+            keySession.pendingUrl = targetUrl
+            setStatus(`агент: открою ${targetUrl} после готовности гостя`)
+          } else if (view === null || typeof view.loadURL !== 'function') {
+            setStatus('агент: E_GUEST_GONE — гость вкладки не создан')
+          } else {
+            counters.navigations += 1
+            view.loadURL(targetUrl)
+            setStatus(`агент: открываю ${targetUrl}`)
+          }
         } else if (command.kind === 'reload') {
-          activeGuest()?.reload?.()
+          const view = activeGuest()
+          if (view !== null && typeof view.reload === 'function') view.reload()
           setStatus('агент: перезагрузка')
         } else if (command.kind === 'pick') {
           setStatus('агент: выбор элемента')
@@ -1200,13 +1230,25 @@ export function startEngine(): void {
     }
 
   void tick()
-  window.setInterval(() => void tick(), 2500)
+  const pollTimer = window.setInterval(() => void tick(), 2500)
   // If nothing ever activates a session, the channel is alive but there is no
   // page: say it out loud instead of waiting for a mystery.
-  window.setTimeout(() => {
+  const hintTimer = window.setTimeout(() => {
     if (sessions.size === 0) {
       setStatus('нет открытой вкладки: нажмите ⌘T (Ctrl+T) — первую вкладку открывает человек, дальше агент управляет сам')
     }
   }, 6000)
-  window.setInterval(collectIdleSessions, 60000)
+  const idleTimer = window.setInterval(collectIdleSessions, 60000)
+  // The effect that started the loop owns its teardown. Without this, every
+  // client rebuild leaves the previous interval polling the same host, and two
+  // revisions of the plugin fight over agent commands.
+  stopEngine = () => {
+    if (!loopStarted) return
+    loopStarted = false
+    window.clearInterval(pollTimer)
+    window.clearTimeout(hintTimer)
+    window.clearInterval(idleTimer)
+    stopEngine = () => undefined
+  }
+  return stopEngine
 }

@@ -212,8 +212,11 @@ export function apply(ctx: ClientContext): void {
     // optional
   }
 
+  // The poll loop belongs to this fiber: activation starts it, unload (including
+  // a client HMR rebuild) stops it. A module-global loop without a disposer
+  // survives the rebuild and keeps competing for agent commands.
   try {
-    startEngine()
+    ctx.effect(() => startEngine(), 'startapus-browser: agent channel')
   } catch {
     // the engine is optional for activation; panels start it on demand
   }

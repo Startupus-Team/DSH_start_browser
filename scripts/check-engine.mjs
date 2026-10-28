@@ -292,8 +292,22 @@ await check('E13: падение гостя восстанавливает ст�
   return 'render-process-gone → recoveries+1, новый гость'
 })
 
+await check('E14: навигация до dom-ready не падает и применяется после', async () => {
+  const hostLate = new FakeElement('div')
+  body.appendChild(hostLate)
+  await engine.showSession('late', 'https://late.example/', hostLate)
+  const guest = engine.guestOf('late')
+  expect(guest !== null, 'гость не создан')
+  const result = engine.openInSession('late', 'https://late.example/next')
+  expect(result.ok === true, `openInSession: ${JSON.stringify(result)}`)
+  expect(guest.loadedUrls.length === 0, 'loadURL до dom-ready всё же вызван')
+  guest.fire('dom-ready')
+  expect(guest.loadedUrls.includes('https://late.example/next'), `после dom-ready: ${JSON.stringify(guest.loadedUrls)}`)
+  return 'отложено и применено на dom-ready'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 13/13')
+console.log('ENGINE OK: 14/14')

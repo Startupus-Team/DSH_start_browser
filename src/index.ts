@@ -1024,10 +1024,10 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       }
       if (command !== undefined) probe('cmd:delivered', { id: command.id, kind: command.kind, tab: key })
       if (command === undefined) {
-        sendJson(res, 204, { ok: true, tabKey: key })
+        sendJson(res, 204, { ok: true, tabKey: key, hostRev: BUILD_REV })
         return
       }
-      sendJson(res, 200, { ok: true, tabKey: key, command })
+      sendJson(res, 200, { ok: true, tabKey: key, hostRev: BUILD_REV, command })
       return
     }
 

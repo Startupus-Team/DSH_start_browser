@@ -22,6 +22,9 @@ export interface BridgeCommand {
 /** Candidate bases, tried in order until one answers `/health`. */
 const BASES = ['', 'dsh-app://app']
 
+/** Host build revision reported by the last poll ('' until known). */
+export let lastHostRev = ''
+
 /** Which Startapus tab this panel instance is. */
 let currentTab = 'startapus-browser'
 
@@ -67,7 +70,17 @@ export async function poll(base: string): Promise<BridgeCommand | null> {
       body: JSON.stringify({ tabKey: currentTab, wait: true }),
     })
     if (!response.ok) return null
-    const body = (await response.json()) as { command?: BridgeCommand }
+    if (response.status === 204) {
+      try {
+        const empty = (await response.json()) as { hostRev?: string }
+        if (typeof empty.hostRev === 'string') lastHostRev = empty.hostRev
+      } catch {
+        // 204 has no body in older builds
+      }
+      return null
+    }
+    const body = (await response.json()) as { command?: BridgeCommand; hostRev?: string }
+    if (typeof body.hostRev === 'string') lastHostRev = body.hostRev
     return body.command ?? null
   } catch {
     return null
