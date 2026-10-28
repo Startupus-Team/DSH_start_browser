@@ -328,11 +328,14 @@ await check('E16: восстановление гостя не превраща�
   expect(guest !== null, 'гость не создан')
   guest.fire('dom-ready')
   const before = engine.engineState().counters.recoveries
+  const releasesBefore = engine.engineState().counters.releases
   guest.fire('render-process-gone')
   guest.fire('destroyed')
   await new Promise((resolve) => setTimeout(resolve, 20))
   const after = engine.engineState().counters.recoveries
   expect(after === before + 1, `recoveries выросли на ${after - before}, ожидалось 1`)
+  const releasesAfter = engine.engineState().counters.releases
+  expect(releasesAfter === releasesBefore + 1, `lease не освобождён при падении: ${releasesBefore} → ${releasesAfter}`)
   await engine.detachSession('loop')
   const afterClose = engine.engineState().counters.recoveries
   await new Promise((resolve) => setTimeout(resolve, 20))

@@ -558,6 +558,7 @@ function handleGuestLoss(session: Session, kind: string): void {
   window.setTimeout(() => {
     if (sessions.get(session.tabId) !== session) return
     sessions.delete(session.tabId)
+    releaseLease(session)
     try {
       session.container.remove()
     } catch {
@@ -623,6 +624,7 @@ export async function showSession(tabId: string, initialUrl: string, host: HTMLE
   if (known !== undefined && !known.container.isConnected) {
     // The pane DOM was replaced (plugin reload, remount): the guest inside the
     // detached container is dead, so forget the zombie session and build a new one.
+    releaseLease(known)
     sessions.delete(tabId)
   }
   const session = sessions.get(tabId) ?? (await ensureSession(tabId, initialUrl === '' ? START_URL : initialUrl, host))
@@ -673,10 +675,7 @@ export function closeSession(tabId: string): boolean {
   }
   if (activeTabId === tabId) activeTabId = null
   const bridge = browserBridge()
-  if (session.lease !== null && bridge !== undefined) {
-    counters.releases += 1
-    void bridge.release(session.lease).catch(() => undefined)
-  }
+  releaseLease(session)
   notify()
   return true
 }
@@ -707,6 +706,16 @@ function collectIdleSessions(): void {
     if (now - session.lastActiveAt < SESSION_IDLE_MS) continue
     closeSession(session.tabId)
   }
+}
+
+/** Release a session's lease exactly once (a leaked lease kills the next guest). */
+function releaseLease(session: Session): void {
+  if (session.lease === null) return
+  const lease = session.lease
+  session.lease = null
+  counters.releases += 1
+  const bridge = browserBridge()
+  if (bridge !== undefined) void bridge.release(lease).catch(() => undefined)
 }
 
 /** Tabs the engine knows about. */
