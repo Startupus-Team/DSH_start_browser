@@ -1086,6 +1086,32 @@ async function cropDataUrl(
   return canvas.toDataURL('image/png')
 }
 
+/** History step or reload on a guest; reports why nothing happened instead of throwing. */
+function navigateGuest(view: GuestElement, action: string): { ok: boolean; reason: string } {
+  try {
+    if (action === 'reload') {
+      if (typeof view.reload !== 'function') return { ok: false, reason: 'гость не поддерживает reload' }
+      view.reload()
+      return { ok: true, reason: '' }
+    }
+    if (action === 'back') {
+      if (typeof view.goBack !== 'function') return { ok: false, reason: 'гость не поддерживает history' }
+      if (view.canGoBack?.() === false) return { ok: false, reason: 'нет предыдущей страницы в истории' }
+      view.goBack()
+      return { ok: true, reason: '' }
+    }
+    if (action === 'forward') {
+      if (typeof view.goForward !== 'function') return { ok: false, reason: 'гость не поддерживает history' }
+      if (view.canGoForward?.() === false) return { ok: false, reason: 'нет следующей страницы в истории' }
+      view.goForward()
+      return { ok: true, reason: '' }
+    }
+    return { ok: false, reason: `неизвестное действие: ${action}` }
+  } catch (error) {
+    return { ok: false, reason: String(error) }
+  }
+}
+
 /** Previous screenshot per target (tab + selector), for `ui_screenshot { diff }`. */
 const lastCaptures = new Map<string, string>()
 const MAX_REMEMBERED_CAPTURES = 8
@@ -1609,6 +1635,21 @@ export function startEngine(): () => void {
             }
             await report(base as string, { waitResult: { ...outcome, at: Date.now() } })
             setStatus(outcome.met === true ? `условие выполнено за ${String(outcome.waitedMs)} мс` : `ожидание: условие не выполнено`)
+          }
+        } else if (command.kind === 'navigate' && controlHolder === 'human') {
+          await report(base as string, { navResult: { ok: false, reason: 'E_HUMAN_CONTROL: управление у человека', at: Date.now() } })
+        } else if (command.kind === 'navigate') {
+          noteAgentAction()
+          const view = await readyView(command)
+          const action = String(command.args.action ?? '')
+          if (view === null) {
+            await report(base as string, { navResult: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)', at: Date.now() } })
+          } else {
+            const outcome = navigateGuest(view, action)
+            // History and reload settle asynchronously: give the guest a moment before reporting the address.
+            if (outcome.ok) await new Promise((resolve) => setTimeout(resolve, 400))
+            await report(base as string, { navResult: { ...outcome, url: view.getURL?.() ?? '', at: Date.now() } })
+            setStatus(outcome.ok ? `агент: ${action}` : `навигация не выполнена: ${outcome.reason}`)
           }
         } else if (command.kind === 'js') {
           const view = await readyView(command)

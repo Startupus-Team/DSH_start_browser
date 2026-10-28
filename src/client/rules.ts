@@ -179,3 +179,14 @@ export function captureKey(tabId: string, selector: string): string {
 export function rememberedScheme(mode: unknown): 'dark' | 'light' | null {
   return mode === 'dark' || mode === 'light' ? mode : null
 }
+
+/** Operations `ui_act` accepts; shared so the single and batch paths cannot drift. */
+export const ACT_OPS = ['click', 'type', 'scroll', 'press', 'hover', 'select', 'check'] as const
+export type ActOp = typeof ACT_OPS[number]
+
+/** Operations that need a target element (everything except `scroll`). */
+export function actNeedsTarget(op: string): boolean {
+  return op !== 'scroll'
+}
+
+export const NAV_ACTIONS = ['back', 'forward', 'reload'] as const

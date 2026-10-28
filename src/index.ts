@@ -21,7 +21,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renam
 import { homedir, tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { COLOR_SCHEMES, normalizeWait } from './client/rules'
+import { ACT_OPS, COLOR_SCHEMES, NAV_ACTIONS, actNeedsTarget, normalizeWait } from './client/rules'
 
 /** Append one diagnostic line; host registration must be observable without DevTools. */
 function probe(event: string, data: Record<string, unknown> = {}): void {
@@ -96,6 +96,7 @@ interface ClientState {
   waitResult: Record<string, unknown> | null
   schemeResult: Record<string, unknown> | null
   jsResult: Record<string, unknown> | null
+  navResult: Record<string, unknown> | null
   clientRev: string
   panelMounts: number
   lastLoadError: Record<string, unknown> | null
@@ -238,6 +239,7 @@ const TOOL_LIMITS: Record<string, number> = {
   ui_measure: 30,
   ui_wait: 30,
   ui_js: 10,
+  ui_navigate: 15,
 }
 
 /** Read a text file, or throw with context. */
@@ -328,6 +330,7 @@ function blankClient(): ClientState {
   waitResult: null,
   schemeResult: null,
   jsResult: null,
+  navResult: null,
   clientRev: '',
   panelMounts: 0,
   lastLoadError: null,
@@ -1144,7 +1147,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           probe('client:instance', { instanceId: body.instanceId, attached: body.attached === true, known: clientInstances.size })
         }
       }
-      for (const field of ['pageText', 'network', 'inspect', 'measure', 'waitResult', 'schemeResult', 'jsResult'] as const) {
+      for (const field of ['pageText', 'network', 'inspect', 'measure', 'waitResult', 'schemeResult', 'jsResult', 'navResult'] as const) {
         const value = (body as Record<string, unknown>)[field]
         if (typeof value === 'object' && value !== null) {
           ;(client as unknown as Record<string, unknown>)[field] = value
@@ -1652,7 +1655,7 @@ function untrusted<T>(data: T, source = 'page'): { trust: { untrusted: true; sou
 }
 
 /** Wait until the renderer reports a fresh value for a page field. */
-async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitResult' | 'schemeResult' | 'jsResult', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
+async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitResult' | 'schemeResult' | 'jsResult' | 'navResult', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
   for (let waited = 0; waited < timeoutMs; waited += 100) {
     const value = client[field]
     if (value !== null && typeof value.at === 'number' && value.at >= since) {
@@ -1852,6 +1855,36 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         approvedOrigins.add(origin)
         const command = enqueue('open', { url })
         return { queued: true, commandId: command.id, url, origin }
+      },
+    },
+    {
+      name: 'ui_navigate',
+      description: 'Навигация по истории вкладки: back, forward, reload. Возвращает итоговый адрес; если истории нет — ok:false с причиной, без ошибки. Для перехода на новый адрес — ui_open.',
+      parameters: objectSchema({
+        action: { type: 'string', enum: [...NAV_ACTIONS], description: 'back | forward | reload' },
+        tabId: tabIdParam,
+      }, ['action']),
+      output: output(asText),
+      execute: async (args: Record<string, unknown>) => {
+        const action = String(args.action ?? '')
+        if (!(NAV_ACTIONS as readonly string[]).includes(action)) {
+          throw new Error(`E_NO_EFFECT: action должен быть ${NAV_ACTIONS.join(', ')}`)
+        }
+        requireTransport()
+        if (client.control === 'human') {
+          fail('E_HUMAN_CONTROL', 'человек забрал управление', 'нажмите «Вернуть агенту» в панели')
+        }
+        const tabId = String(args.tabId ?? '')
+        const since = Date.now()
+        const command = enqueue('navigate', { action, ...(tabId === '' ? {} : { tabId }) })
+        const result = await waitForField('navResult', since, 6000)
+        return untrusted({
+          ok: result.ok === true,
+          action,
+          url: result.url ?? null,
+          reason: result.reason ?? '',
+          commandId: command.id,
+        }, 'navigate')
       },
     },
     {
@@ -2272,7 +2305,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       name: 'ui_act',
       description: 'Действие на странице: click (по селектору), type (ввод в поле), scroll (к элементу или к Y). Инициируется агентом; результат приходит через ui_status/lastAct.',
       parameters: objectSchema({
-        op: { type: 'string', enum: ['click', 'type', 'scroll', 'press'], description: 'Операция (press — нажатие клавиши, value = Enter/Tab/Escape)' },
+        op: { type: 'string', enum: [...ACT_OPS], description: 'Операция: click, type, scroll, press (value = Enter/Tab/Escape), hover (синтетические события мыши, CSS :hover не включается), select (value = value или текст варианта <select>), check (value = true/false для чекбокса, радио и aria-checked)' },
         selector: { type: 'string', description: 'Селектор цели (для scroll можно пусто)' },
         value: { type: 'string', description: 'Текст для type или Y для scroll' },
         ref: { type: 'string', description: 'ref_N из ui_read_page/ui_find вместо селектора' },
@@ -2296,12 +2329,12 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
           const items = batch.map((item) => {
             const row = item as Record<string, unknown>
             const rowOp = String(row.op ?? '')
-            if (rowOp !== 'click' && rowOp !== 'type' && rowOp !== 'scroll' && rowOp !== 'press') {
+            if (!(ACT_OPS as readonly string[]).includes(rowOp)) {
               throw new Error(`E_NO_EFFECT: неизвестная операция ${rowOp}`)
             }
             const rowSelector = String(row.selector ?? '')
-            if (rowOp !== 'scroll' && rowSelector === '') {
-              throw new Error('E_NO_EFFECT: для click/type нужен селектор')
+            if (actNeedsTarget(rowOp) && rowSelector === '') {
+              throw new Error(`E_NO_EFFECT: для ${rowOp} нужен селектор`)
             }
             return { op: rowOp, selector: rowSelector, value: String(row.value ?? '') }
           })
@@ -2309,8 +2342,8 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
           return { queued: true, commandId: command.id, count: items.length }
         }
         const op = String(args.op ?? '')
-        if (op !== 'click' && op !== 'type' && op !== 'scroll' && op !== 'press') {
-          throw new Error('E_NO_EFFECT: op должен быть click, type, scroll или press')
+        if (!(ACT_OPS as readonly string[]).includes(op)) {
+          throw new Error(`E_NO_EFFECT: op должен быть ${ACT_OPS.join(', ')}`)
         }
         let selector = String(args.selector ?? '')
         const ref = String(args.ref ?? '')
@@ -2321,7 +2354,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
           if (row === undefined) fail('E_NOT_FOUND', `${ref} нет в последнем обзоре`, 'вызовите ui_read_page заново')
           selector = String(row.selector ?? '')
         }
-        if (op !== 'scroll' && selector === '') throw new Error('E_NO_EFFECT: для click/type нужен selector или ref')
+        if (actNeedsTarget(op) && selector === '') throw new Error(`E_NO_EFFECT: для ${op} нужен selector или ref`)
         const tabId = String(args.tabId ?? '')
         const command = enqueue('act', tabId === '' ? { op, selector, value: String(args.value ?? '') } : { op, selector, value: String(args.value ?? ''), tabId })
         return { queued: true, commandId: command.id, op, selector }
@@ -3147,6 +3180,53 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'P3-4: вердикты contrast / no-hscroll / in-viewport', pass: true, detail: `${checks.length} случаев` })
   } catch (error) {
     results.push({ name: 'P3-4: вердикты contrast / no-hscroll / in-viewport', pass: false, detail: String(error) })
+  }
+
+  // ui_navigate and the extended ui_act operations.
+  try {
+    seedTransport()
+    commands.length = 0
+    await rejects('E_NO_EFFECT', () => call('ui_navigate', { action: 'sideways' }))
+    client.control = 'human'
+    try {
+      await rejects('E_HUMAN_CONTROL', () => call('ui_navigate', { action: 'back' }))
+    } finally {
+      client.control = null
+    }
+    if (commands.length !== 0) throw new Error('отклонённый ui_navigate поставил команду')
+
+    const going = call('ui_navigate', { action: 'back', tabId: 'tab-n' }) as Promise<Record<string, unknown>>
+    const navCommand = commands[commands.length - 1]
+    if (navCommand?.kind !== 'navigate' || navCommand.args.action !== 'back' || navCommand.args.tabId !== 'tab-n') {
+      throw new Error(`navigate не поставлен: ${JSON.stringify(navCommand)}`)
+    }
+    await handleRoute(fakeRequest({ navResult: { ok: true, url: 'https://x.test/prev', reason: '', at: Date.now() } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const went = unwrap<{ ok?: boolean; url?: string; action?: string }>(await going)
+    if (went.ok !== true || went.url !== 'https://x.test/prev' || went.action !== 'back') throw new Error(`navigate вернул ${JSON.stringify(went)}`)
+    commands.length = 0
+
+    const stuck = call('ui_navigate', { action: 'forward' }) as Promise<Record<string, unknown>>
+    await handleRoute(fakeRequest({ navResult: { ok: false, url: 'https://x.test/', reason: 'нет следующей страницы в истории', at: Date.now() } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const noForward = unwrap<{ ok?: boolean; reason?: string }>(await stuck)
+    if (noForward.ok !== false || !String(noForward.reason).includes('истории')) throw new Error(`forward без истории: ${JSON.stringify(noForward)}`)
+    commands.length = 0
+
+    for (const op of ['hover', 'select', 'check']) {
+      const queuedAct = call('ui_act', { op, selector: '#field', value: op === 'select' ? 'b' : 'true' }) as { queued?: boolean }
+      const actQueued = commands[commands.length - 1]
+      if (queuedAct.queued !== true || actQueued?.kind !== 'act' || actQueued.args.op !== op) throw new Error(`${op} не поставлен: ${JSON.stringify(actQueued)}`)
+      commands.length = 0
+    }
+    await rejects('E_NO_EFFECT', () => call('ui_act', { op: 'hover' }))
+    await rejects('E_NO_EFFECT', () => call('ui_act', { op: 'teleport', selector: '#x' }))
+    const batch = call('ui_act', { items: [{ op: 'check', selector: '#a', value: 'false' }, { op: 'select', selector: '#b', value: 'x' }, { op: 'hover', selector: '#c' }] }) as { count?: number }
+    if (batch.count !== 3) throw new Error(`пакет с новыми операциями: ${JSON.stringify(batch)}`)
+    commands.length = 0
+    results.push({ name: 'P3-5: ui_navigate и ui_act hover/select/check', pass: true, detail: 'back/forward/reload, отказы, новые операции в одиночном и пакетном виде' })
+  } catch (error) {
+    commands.length = 0
+    client.control = null
+    results.push({ name: 'P3-5: ui_navigate и ui_act hover/select/check', pass: false, detail: String(error) })
   }
 
   // Phase 2: typed failures carry a hint the agent can act on.

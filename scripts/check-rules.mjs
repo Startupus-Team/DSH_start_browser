@@ -339,8 +339,58 @@ check('R16: контраст не округляется вверх (WCAG)', () 
   return `серые 100..200: значение ≤ истинного и в пределах 0.01 (кандидатов у порога 4.5: ${near})`
 })
 
+class FakeEvent { constructor(type, init = {}) { this.type = type; Object.assign(this, init) } }
+const runAct = (op, selector, value, el) => {
+  const events = []
+  if (el) el.dispatchEvent = (event) => { events.push(event.type); return true }
+  const context = {
+    document: { querySelector: () => el ?? null, activeElement: null, body: {} },
+    window: { scrollTo() {} },
+    Event: FakeEvent, MouseEvent: FakeEvent, InputEvent: FakeEvent, KeyboardEvent: FakeEvent, PointerEvent: FakeEvent,
+    HTMLInputElement: class {}, HTMLTextAreaElement: class {},
+  }
+  const result = JSON.parse(vm.runInNewContext(scripts.actScript(op, selector, value), context))
+  return { result, events }
+}
+const baseEl = () => ({ scrollIntoView() {}, focus() {}, click() { this.clicked = (this.clicked ?? 0) + 1 }, getBoundingClientRect: () => ({ left: 10, top: 10, width: 20, height: 10 }), getAttribute: () => null })
+
+check('R17: ui_act — hover, select, check', () => {
+  const hover = runAct('hover', '#h', '', baseEl())
+  expect(hover.result.status === 'OK', JSON.stringify(hover.result))
+  expect(['mouseover', 'mouseenter', 'mousemove'].every((name) => hover.events.includes(name)), `события hover: ${hover.events}`)
+  expect(runAct('hover', '#h', '', null).result.status === 'MISSING', 'hover без элемента')
+
+  const options = [{ value: 'a', text: ' Alpha ' }, { value: 'b', text: 'Beta' }, { value: 'c', text: 'Gamma', disabled: true }]
+  const pick = (value) => runAct('select', '#s', value, { ...baseEl(), options, selectedIndex: 0, get value() { return options[this.selectedIndex].value } })
+  const byValue = pick('b')
+  expect(byValue.result.status === 'OK' && byValue.result.value === 'b' && byValue.events.includes('change'), JSON.stringify(byValue))
+  expect(pick('Alpha').result.value === 'a', 'выбор по тексту (с обрезкой пробелов)')
+  const missing = pick('zzz')
+  expect(missing.result.status === 'ERROR' && missing.result.message.includes('a=Alpha'), JSON.stringify(missing.result))
+  expect(pick('c').result.message === 'вариант отключён', 'отключённый вариант')
+  expect(runAct('select', '#s', 'a', baseEl()).result.message === 'элемент не <select>', 'не select')
+
+  const box = (checked, extra = {}) => ({ ...baseEl(), checked, type: 'checkbox', disabled: false, click() { this.checked = !this.checked }, ...extra })
+  const on = runAct('check', '#c', 'true', box(false))
+  expect(on.result.status === 'OK' && on.result.checked === true, JSON.stringify(on.result))
+  const already = box(true)
+  runAct('check', '#c', 'true', already)
+  expect(already.checked === true, 'повторный check снял галочку')
+  const off = runAct('check', '#c', 'false', box(true))
+  expect(off.result.checked === false, JSON.stringify(off.result))
+  expect(runAct('check', '#c', 'true', box(false, { disabled: true })).result.message === 'элемент отключён', 'отключённый чекбокс')
+  const radio = runAct('check', '#r', 'false', box(true, { type: 'radio' }))
+  expect(radio.result.status === 'ERROR' && radio.result.message.includes('радио'), JSON.stringify(radio.result))
+  const stubborn = runAct('check', '#c', 'true', box(false, { click() {} }))
+  expect(stubborn.result.status === 'ERROR' && stubborn.result.message.includes('не изменилось'), JSON.stringify(stubborn.result))
+  const aria = { ...baseEl(), checked: undefined, state: 'false', getAttribute(name) { return name === 'aria-checked' ? this.state : null }, click() { this.state = this.state === 'true' ? 'false' : 'true' } }
+  expect(runAct('check', '#sw', 'true', aria).result.checked === true, 'aria-checked переключатель')
+  expect(runAct('check', '#x', 'true', baseEl()).result.message.includes('не чекбокс'), 'не чекбокс')
+  return 'hover-события, select по value/тексту/ошибки, check для native/radio/aria'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 16/16')
+console.log('RULES OK: 17/17')

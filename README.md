@@ -147,15 +147,15 @@ cd ~/.dsh/profiles/desktop && pnpm install
 
 ## Инструменты агента
 
-Host-половина регистрирует 34 инструмента (`ctx.tools.register`, каждый с обязательным `output { schema, render }`;
+Host-половина регистрирует 35 инструментов (`ctx.tools.register`, каждый с обязательным `output { schema, render }`;
 полный список и покрытие тестами — `docs/tool-audit.md`):
 
 | Группа | Инструменты |
 |---|---|
 | Состояние и вкладки | `ui_status`, `ui_tabs`, `ui_new_tab`, `ui_close_tab`, `ui_focus_tab`, `ui_activate_tab`, `ui_guest_state` |
-| Навигация | `ui_open`, `ui_viewport` (zoom, ширина, пресеты, `colorScheme` dark/light/auto) |
+| Навигация | `ui_open`, `ui_navigate` (back/forward/reload), `ui_viewport` (zoom, ширина, пресеты, `colorScheme` dark/light/auto) |
 | Чтение страницы | `ui_read_page`, `ui_find`, `ui_page_text`, `ui_console`, `ui_network`, `ui_inspect`, `ui_measure`, `ui_screenshot` (`diff` — сравнение с прошлым снимком) |
-| Действия и ожидание | `ui_act` (click/type/scroll/press, `ref`, пакет до 10), `ui_wait` (селектор/текст/сеть), `ui_js` (диагностика) |
+| Действия и ожидание | `ui_act` (click/type/scroll/press/hover/select/check, `ref`, пакет до 10), `ui_wait` (селектор/текст/сеть), `ui_js` (диагностика) |
 | Выбор элемента | `ui_pick`, `ui_pick_area`, `ui_select`, `ui_area`, `ui_evidence` |
 | Приёмка | `ui_verify` (**только он ставит `verified`**), `ui_template`, `ui_export`; критерии `computed`, `box`, `text`, `exists`, `visible`, `contrast`, `no-hscroll`, `in-viewport` |
 | Очередь задач | `task_create`, `task_batch`, `task_claim`, `task_list`, `task_get`, `task_update` (`E_NO_ACCEPTANCE` на `triaged` без критерия, `E_FORBIDDEN` на `verified`) |
@@ -172,7 +172,7 @@ Host-половина регистрирует 34 инструмента (`ctx.t
 ## Проверки
 
 ```bash
-npm run selftest     # офлайн: гейты, компаратор, verify-движок, soak, area, page-скрипты — 60 проверок
+npm run selftest     # офлайн: гейты, компаратор, verify-движок, soak, area, page-скрипты — 61 проверка
 npm run live         # живой процесс: сверка capabilities, transport, selftest на госте
 ```
 

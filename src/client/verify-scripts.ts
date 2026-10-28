@@ -265,6 +265,58 @@ export function actScript(op: string, selector: string, value: string): string {
         }
         return JSON.stringify({ status: 'OK', op: op, key: key });
       }
+      if (op === 'hover') {
+        if (el === null) return JSON.stringify({ status: 'MISSING' });
+        el.scrollIntoView({ block: 'center' });
+        var box = el.getBoundingClientRect();
+        var init = { bubbles: true, cancelable: true, clientX: Math.round(box.left + box.width / 2), clientY: Math.round(box.top + box.height / 2), view: window };
+        var fire = function (type, bubbles) { el.dispatchEvent(new MouseEvent(type, Object.assign({}, init, { bubbles: bubbles }))); };
+        if (typeof PointerEvent !== 'undefined') el.dispatchEvent(new PointerEvent('pointerover', init));
+        fire('mouseover', true);
+        fire('mouseenter', false);
+        fire('mousemove', true);
+        return JSON.stringify({ status: 'OK', op: op, note: 'синтетические события мыши: CSS :hover не включается' });
+      }
+      if (op === 'select') {
+        if (el === null) return JSON.stringify({ status: 'MISSING' });
+        if (!el.options) return JSON.stringify({ status: 'ERROR', message: 'элемент не <select>' });
+        var chosen = -1;
+        for (var oi = 0; oi < el.options.length; oi += 1) {
+          if (el.options[oi].value === value) { chosen = oi; break; }
+        }
+        if (chosen < 0) {
+          for (var ti = 0; ti < el.options.length; ti += 1) {
+            if ((el.options[ti].text || '').trim() === value.trim()) { chosen = ti; break; }
+          }
+        }
+        if (chosen < 0) {
+          var offered = Array.prototype.slice.call(el.options, 0, 12).map(function (o) { return o.value + '=' + (o.text || '').trim(); }).join(' | ');
+          return JSON.stringify({ status: 'ERROR', message: 'нет варианта «' + value + '»; есть: ' + offered });
+        }
+        if (el.options[chosen].disabled) return JSON.stringify({ status: 'ERROR', message: 'вариант отключён' });
+        el.focus();
+        el.selectedIndex = chosen;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        return JSON.stringify({ status: 'OK', op: op, value: el.value });
+      }
+      if (op === 'check') {
+        if (el === null) return JSON.stringify({ status: 'MISSING' });
+        var want = !(value === 'false' || value === '0' || value === 'off');
+        var aria = el.getAttribute && el.getAttribute('aria-checked');
+        var native = typeof el.checked === 'boolean';
+        if (!native && aria === null) return JSON.stringify({ status: 'ERROR', message: 'элемент не чекбокс/радио/переключатель' });
+        if (native && el.disabled) return JSON.stringify({ status: 'ERROR', message: 'элемент отключён' });
+        var now = native ? el.checked : aria === 'true';
+        if (now !== want) {
+          if (native && el.type === 'radio' && !want) return JSON.stringify({ status: 'ERROR', message: 'радио нельзя снять — выберите другой вариант' });
+          el.scrollIntoView({ block: 'center' });
+          el.click();
+        }
+        var after = native ? el.checked : el.getAttribute('aria-checked') === 'true';
+        if (after !== want) return JSON.stringify({ status: 'ERROR', message: 'состояние не изменилось (страница отменила клик)' });
+        return JSON.stringify({ status: 'OK', op: op, checked: after });
+      }
       if (op === 'scroll') {
         var y = Number.parseInt(value, 10);
         if (el !== null) el.scrollIntoView({ block: 'center' });
