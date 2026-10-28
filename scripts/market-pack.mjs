@@ -77,11 +77,14 @@ const index = {
       title: { en: 'Startapus Browser', ru: 'Startapus Browser', zh: 'Startapus 浏览器' },
       description: {
         en: 'A real webview browser tab in the DSH right sidebar with agent tools and an element picker.',
-        ru: 'Настоящий браузер в правой панели DSH: агентские инструменты и пикер элементов.',
+        ru: 'Настоящий браузер в правой панели DSH: скриншоты, проверки страницы и пикер элементов для агента.',
         zh: 'DSH 右侧边栏中的真实 webview 浏览器标签页，内置智能体工具与页面元素选择器。',
       },
       icon: pkg.icon ?? 'icon.svg',
-      metadata: { category: 'browser', keywords: ['browser', 'webview', 'review', 'screenshot'] },
+      metadata: {
+        category: 'browser',
+        keywords: ['browser', 'webview', 'review', 'screenshot', 'браузер', 'скриншот', 'пикер', 'проверка'],
+      },
       versions: [
         {
           version,

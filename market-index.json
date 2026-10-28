@@ -31,7 +31,7 @@
       },
       "description": {
         "en": "A real webview browser tab in the DSH right sidebar with agent tools and an element picker.",
-        "ru": "Настоящий браузер в правой панели DSH: агентские инструменты и пикер элементов.",
+        "ru": "Настоящий браузер в правой панели DSH: скриншоты, проверки страницы и пикер элементов для агента.",
         "zh": "DSH 右侧边栏中的真实 webview 浏览器标签页，内置智能体工具与页面元素选择器。"
       },
       "icon": "./icon.svg",
@@ -41,17 +41,21 @@
           "browser",
           "webview",
           "review",
-          "screenshot"
+          "screenshot",
+          "браузер",
+          "скриншот",
+          "пикер",
+          "проверка"
         ]
       },
       "versions": [
         {
           "version": "0.25.0",
-          "publishTimestamp": 1793204633,
+          "publishTimestamp": 1793205319,
           "source": {
             "type": "git",
             "url": "https://github.com/Startupus-Team/DSH_start_browser",
-            "commit": "a06a34ba01b0b214dca90eb7d381f24a1b879614"
+            "commit": "0a54d931d730440ff8ad78780d17fa1d5cf44c4e"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.3 <0.3.0"
