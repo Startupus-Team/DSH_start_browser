@@ -11,7 +11,7 @@
  */
 
 import type { ElementPick } from './element-refs.ts'
-import { actScript, coverageScript, evidenceScript, measureScript, pageScanScript } from './verify-scripts'
+import { actScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript } from './verify-scripts'
 import { cropRect as clampCropRect, normalizeAddress, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
@@ -269,6 +269,14 @@ export function activeGuest(): GuestElement | null {
   return null
 }
 
+/** Guest addressed by a command: `args.tabId` when present, else the active one. */
+function guestFor(command: { args: Record<string, unknown> }): GuestElement | null {
+  const tabId = String(command.args.tabId ?? '')
+  if (tabId === '') return activeGuest()
+  const session = sessions.get(tabId)
+  return session?.guest ?? null
+}
+
 /** Guest of one tab. */
 export function guestOf(tabId: string): GuestElement | null {
   return sessions.get(tabId)?.guest ?? null
@@ -410,7 +418,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
         level: typeof detail?.level === 'number' ? detail.level : 0,
         message: String(detail?.message ?? '').slice(0, 300),
       })
-      while (consoleRing.length > 30) consoleRing.shift()
+      while (consoleRing.length > 200) consoleRing.shift()
     })
     const onLost = (kind: string) => (): void => {
       handleGuestLoss(session, kind)
@@ -748,7 +756,7 @@ export function startEngine(): void {
           setStatus('агент: выбор элемента')
           pickRequested()
         } else if (command.kind === 'read_page') {
-          const view = activeGuest()
+          const view = guestFor(command)
           const limit = Math.min(200, Math.max(10, Number(command.args.limit ?? 120)))
           if (view === null || view.executeJavaScript === undefined) {
             await report(base as string, { pageScan: { error: 'guest не готов' } })
@@ -771,7 +779,7 @@ export function startEngine(): void {
           setStatus('агент: пакет действий отклонён — управление у вас')
         } else if (command.kind === 'act_batch') {
           noteAgentAction()
-          const view = activeGuest()
+          const view = guestFor(command)
           const items = Array.isArray(command.args.items)
             ? command.args.items as Array<{ op: string; selector: string; value: string }>
             : []
@@ -792,8 +800,51 @@ export function startEngine(): void {
           }
           await report(base as string, { actResults: results })
           setStatus(`пакет действий: ${results.filter((row) => row.status === 'OK').length}/${results.length} выполнено`)
+        } else if (command.kind === 'page_text') {
+          const view = guestFor(command)
+          const limit = Math.min(20000, Math.max(1000, Number(command.args.limit ?? 5000)))
+          if (view === null || view.executeJavaScript === undefined) {
+            await report(base as string, { pageText: { error: 'guest не готов' } })
+          } else {
+            try {
+              const raw = await withTimeout(view.executeJavaScript(pageTextScript(limit), false), 6000, 'E_TIMEOUT')
+              const parsed = typeof raw === 'string' ? JSON.parse(raw) as Record<string, unknown> : {}
+              await report(base as string, { pageText: { ...parsed, at: Date.now() } })
+            } catch (error) {
+              await report(base as string, { pageText: { error: String(error), at: Date.now() } })
+            }
+          }
+        } else if (command.kind === 'network') {
+          const view = guestFor(command)
+          const limit = Math.min(200, Math.max(10, Number(command.args.limit ?? 100)))
+          if (view === null || view.executeJavaScript === undefined) {
+            await report(base as string, { network: { error: 'guest не готов' } })
+          } else {
+            try {
+              const raw = await withTimeout(view.executeJavaScript(networkScript(limit), false), 6000, 'E_TIMEOUT')
+              const parsed = typeof raw === 'string' ? JSON.parse(raw) as Record<string, unknown> : {}
+              await report(base as string, { network: { ...parsed, at: Date.now() } })
+            } catch (error) {
+              await report(base as string, { network: { error: String(error), at: Date.now() } })
+            }
+          }
+        } else if (command.kind === 'inspect') {
+          const view = guestFor(command)
+          const selector = String(command.args.selector ?? '')
+          const styles = Array.isArray(command.args.styles) ? command.args.styles.map(String).slice(0, 40) : []
+          if (view === null || view.executeJavaScript === undefined) {
+            await report(base as string, { inspect: { error: 'guest не готов' } })
+          } else {
+            try {
+              const raw = await withTimeout(view.executeJavaScript(inspectScript(selector, styles), false), 6000, 'E_TIMEOUT')
+              const parsed = typeof raw === 'string' ? JSON.parse(raw) as Record<string, unknown> : {}
+              await report(base as string, { inspect: { ...parsed, at: Date.now() } })
+            } catch (error) {
+              await report(base as string, { inspect: { error: String(error), at: Date.now() } })
+            }
+          }
         } else if (command.kind === 'guest_state') {
-          const view = activeGuest()
+          const view = guestFor(command)
           if (view === null) {
             await report(base as string, { guestState: { error: 'guest не создан' } })
           } else {
@@ -839,7 +890,7 @@ export function startEngine(): void {
           consoleRing.length = 0
           setStatus('консоль очищена')
         } else if (command.kind === 'select') {
-          const view = activeGuest()
+          const view = guestFor(command)
           const selector = String(command.args.selector ?? '')
           if (view === null || view.executeJavaScript === undefined) {
             setStatus('выбор по селектору: guest не готов')
@@ -871,7 +922,7 @@ export function startEngine(): void {
           setStatus('агент: действие отклонено — управление у вас')
         } else if (command.kind === 'act') {
           noteAgentAction()
-          const view = activeGuest()
+          const view = guestFor(command)
           const op = String(command.args.op ?? '')
           const selector = String(command.args.selector ?? '')
           const value = String(command.args.value ?? '')
@@ -890,7 +941,7 @@ export function startEngine(): void {
         } else if (command.kind === 'capture') {
           const selector = String(command.args.selector ?? '')
           await report(base as string, { captureStage: { step: 'start', selector } })
-          const view = activeGuest()
+          const view = guestFor(command)
           await report(base as string, { captureStage: { step: 'guest', hasView: view !== null, hasCapture: view?.capturePage !== undefined } })
           if (view === null || view.capturePage === undefined) {
             setStatus('снимок недоступен: capturePage нет')
@@ -939,7 +990,7 @@ export function startEngine(): void {
             }
           }
         } else if (command.kind === 'verify_area') {
-          const view = activeGuest()
+          const view = guestFor(command)
           const taskId = String(command.args.taskId ?? '')
           const covered = Array.isArray(command.args.covered)
             ? command.args.covered as Array<{ tag: string; id: string; classes: string }>
@@ -976,7 +1027,7 @@ export function startEngine(): void {
             }
           }
         } else if (command.kind === 'pick_area') {
-          const view = activeGuest()
+          const view = guestFor(command)
           setStatus('агент: выделите область мышью · Esc — отмена')
           if (view === null || view.executeJavaScript === undefined) {
             setStatus('выделение области недоступно: guest не готов')
@@ -1016,7 +1067,7 @@ export function startEngine(): void {
           }
         } else if (command.kind === 'viewport') {
           const zoom = Number(command.args.zoom ?? 1)
-          const view = activeGuest()
+          const view = guestFor(command)
           if (view !== null && view.setZoomFactor !== undefined && Number.isFinite(zoom)) {
             try {
               view.setZoomFactor(Math.min(2, Math.max(0.5, zoom)))
@@ -1028,7 +1079,7 @@ export function startEngine(): void {
         } else if (command.kind === 'viewport_width') {
           // Approximate device-width emulation: Electron zoom changes the CSS
           // viewport, so targeting innerWidth works without CDP.
-          const view = activeGuest()
+          const view = guestFor(command)
           const target = Number(command.args.width ?? 0)
           if (view === null || view.executeJavaScript === undefined || view.setZoomFactor === undefined) {
             await report(base as string, { viewportResult: { width: target, innerWidth: 0, zoom: 1, error: 'guest не готов' } })
@@ -1056,7 +1107,7 @@ export function startEngine(): void {
             }
           }
         } else if (command.kind === 'verify') {
-          const view = activeGuest()
+          const view = guestFor(command)
           const taskId = String(command.args.taskId ?? '')
           const target = String(command.args.selector ?? '')
           const method = String(command.args.method ?? 'computed')
@@ -1104,7 +1155,7 @@ export function startEngine(): void {
         status: status,
         hasGuest: activeGuest() !== null,
         evidence: evidence,
-        console: consoleRing.slice(-30),
+        console: consoleRing.slice(-200),
         crop: crop,
         area: area,
         hidden: typeof document !== 'undefined' && document.visibilityState === 'hidden',

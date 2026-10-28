@@ -37,6 +37,9 @@ const cases = [
   ['act/type', module.actScript('type', 'input', 'привет')],
   ['act/scroll', module.actScript('scroll', '', '420')],
   ['page-scan', module.pageScanScript(120)],
+  ['page-text', module.pageTextScript(4000)],
+  ['network', module.networkScript(100)],
+  ['inspect', module.inspectScript('a', ['color'])],
 ]
 
 let failed = 0

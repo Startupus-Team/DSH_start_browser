@@ -258,3 +258,70 @@ export function pageScanScript(limit: number): string {
     }
   })()`
 }
+
+/**
+ * Visible page text, article-first (Claude's `get_page_text` contract):
+ * prefer article/main, fall back to body.innerText.
+ */
+export function pageTextScript(limit: number): string {
+  return `(() => {
+    try {
+      const MAX = ${limit};
+      const pick = document.querySelector('article, main, [role="main"]') || document.body;
+      const text = (pick && pick.innerText ? pick.innerText : '').replace(/\\n{3,}/g, '\\n\\n').trim();
+      return JSON.stringify({ status: 'OK', url: String(location.href), title: String(document.title), text: text.slice(0, MAX), truncated: text.length > MAX });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
+
+/** Resource timings of the page: what was requested, how long and how heavy. */
+export function networkScript(limit: number): string {
+  return `(() => {
+    try {
+      const MAX = ${limit};
+      const rows = performance.getEntriesByType('resource').map((entry) => ({
+        name: String(entry.name).slice(0, 300),
+        type: String(entry.initiatorType || 'other'),
+        durationMs: Math.round(entry.duration),
+        transferBytes: Number(entry.transferSize || 0),
+        startMs: Math.round(entry.startTime)
+      }));
+      const slow = rows.filter((row) => row.durationMs >= 400).length;
+      const heavy = rows.filter((row) => row.transferBytes >= 200000).length;
+      return JSON.stringify({ status: 'OK', total: rows.length, slow, heavy, entries: rows.slice(-MAX) });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
+
+/** Targeted computed-style inspection for one selector (Claude's `preview_inspect`). */
+export function inspectScript(selector: string, styles: readonly string[]): string {
+  const requested = styles.length > 0 ? styles : ['color', 'background-color', 'font-size', 'font-family', 'font-weight', 'line-height', 'padding', 'margin', 'border', 'border-radius', 'display', 'position', 'width', 'height', 'gap', 'flex-direction', 'text-align', 'opacity']
+  return `(() => {
+    try {
+      const nodes = document.querySelectorAll(${JSON.stringify(selector)});
+      if (nodes.length === 0) return JSON.stringify({ status: 'MISSING', count: 0 });
+      if (nodes.length > 1) return JSON.stringify({ status: 'AMBIGUOUS', count: nodes.length });
+      const node = nodes[0];
+      const computed = getComputedStyle(node);
+      const box = node.getBoundingClientRect();
+      const wanted = ${JSON.stringify(requested)};
+      const styles = {};
+      for (const name of wanted) styles[name] = computed.getPropertyValue(name);
+      return JSON.stringify({
+        status: 'OK',
+        selector: ${JSON.stringify(selector)},
+        tag: node.tagName.toLowerCase(),
+        text: (node.textContent || '').trim().slice(0, 200),
+        styles,
+        rect: { x: Math.round(box.left), y: Math.round(box.top), width: Math.round(box.width), height: Math.round(box.height) },
+        env: { url: String(location.href), title: String(document.title), viewport: { width: window.innerWidth, height: window.innerHeight }, dpr: window.devicePixelRatio }
+      });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}

@@ -86,6 +86,9 @@ interface ClientState {
   panes: string[]
   lastNavAttempt: Record<string, unknown> | null
   shortcutState: Record<string, unknown> | null
+  pageText: Record<string, unknown> | null
+  network: Record<string, unknown> | null
+  inspect: Record<string, unknown> | null
   clientRev: string
   control: 'agent' | 'human' | null
   agentActive: boolean
@@ -209,6 +212,9 @@ const TOOL_LIMITS: Record<string, number> = {
   ui_act: 20,
   ui_screenshot: 15,
   ui_focus_tab: 15,
+  ui_page_text: 20,
+  ui_network: 20,
+  ui_inspect: 30,
 }
 
 /** Read a text file, or throw with context. */
@@ -289,6 +295,9 @@ function blankClient(): ClientState {
   panes: [],
   lastNavAttempt: null,
   shortcutState: null,
+  pageText: null,
+  network: null,
+  inspect: null,
   clientRev: '',
   control: null,
   agentActive: false,
@@ -933,6 +942,9 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         panes: client.panes,
         lastNavAttempt: client.lastNavAttempt,
         shortcutState: client.shortcutState,
+        pageText: client.pageText,
+        network: client.network,
+        inspect: client.inspect,
         control: client.control,
         agentActive: client.agentActive,
         engineActive: client.engineActive,
@@ -1022,6 +1034,13 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         probe('focustab:done', client.focusTabResult)
       }
       if (typeof body.panels === 'number') client.panels = body.panels
+      for (const field of ['pageText', 'network', 'inspect'] as const) {
+        const value = (body as Record<string, unknown>)[field]
+        if (typeof value === 'object' && value !== null) {
+          ;(client as unknown as Record<string, unknown>)[field] = value
+          probe(`${field}:done`, { at: (value as { at?: number }).at ?? Date.now() })
+        }
+      }
       if (typeof body.clientRev === 'string' && body.clientRev !== '') {
         if (client.clientRev !== '' && client.clientRev !== body.clientRev) {
           probe('rev:mismatch', { previous: client.clientRev, next: body.clientRev })
@@ -1424,7 +1443,23 @@ function buildTools(): Array<Record<string, unknown>> {
     additionalProperties: false,
   })
 
-  /** Every tool must declare `output { schema, render }` or the registry rejects it. */
+  /** `tabId` selector shared by the page-facing tools. */
+const tabIdParam = { type: 'string', description: 'Ключ вкладки из ui_tabs (по умолчанию активная)' } as const
+
+/** Wait until the renderer reports a fresh value for a page field. */
+async function waitForField(field: 'pageText' | 'network' | 'inspect', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
+  for (let waited = 0; waited < timeoutMs; waited += 100) {
+    const value = client[field]
+    if (value !== null && typeof value.at === 'number' && value.at >= since) {
+      if (typeof value.error === 'string' && value.error !== '') throw new Error(`E_SCAN: ${value.error}`)
+      return value
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  throw new Error(`E_TIMEOUT: ${field} не пришёл за ${timeoutMs / 1000} с`)
+}
+
+/** Every tool must declare `output { schema, render }` or the registry rejects it. */
   const output = (render: (result: unknown) => Array<{ type: string; text: string }>): Record<string, unknown> => ({
     schema: { type: 'object', additionalProperties: true },
     render: (result: unknown) => render(result),
@@ -1441,7 +1476,7 @@ function buildTools(): Array<Record<string, unknown>> {
       description: 'Консоль страницы с фильтром по уровню и очисткой. Кольцевой буфер 30 записей, приходит с каждого отчёта панели.',
       parameters: objectSchema({
         level: { type: 'string', enum: ['error', 'warning', 'info', 'log'], description: 'Фильтр уровня' },
-        limit: { type: 'number', description: 'Сколько вернуть, до 30' },
+        limit: { type: 'number', description: 'Сколько вернуть, до 200' },
         clear: { type: 'boolean', description: 'Очистить буфер в панели и на host' },
       }, []),
       output: output(asText),
@@ -1452,7 +1487,7 @@ function buildTools(): Array<Record<string, unknown>> {
           return { cleared: true, remaining: 0 }
         }
         const levelName = typeof args.level === 'string' ? args.level : ''
-        const limit = typeof args.limit === 'number' ? Math.min(30, Math.max(1, args.limit)) : 30
+        const limit = typeof args.limit === 'number' ? Math.min(200, Math.max(1, args.limit)) : 200
         const rows = client.console.filter((row) => {
           if (levelName === '') return true
           const level = Number(row.level ?? 0)
@@ -1468,22 +1503,24 @@ function buildTools(): Array<Record<string, unknown>> {
     {
       name: 'ui_guest_state',
       description: 'Диагностика гостя в целевой вкладке: адрес, title, readyState, длина текста, getURL. Нужна, когда страница выглядит пустой.',
-      parameters: objectSchema({}, []),
+      parameters: objectSchema({ tabId: tabIdParam }, []),
       output: output(asText),
-      execute: () => {
+      execute: (args: Record<string, unknown>) => {
         requireTransport()
-        const command = enqueue('guest_state', {})
+        const tabId = String(args.tabId ?? '')
+        const command = enqueue('guest_state', tabId === '' ? {} : { tabId })
         return { queued: true, commandId: command.id, tab: command.tab }
       },
     },
     {
       name: 'ui_close_tab',
       description: 'Закрыть активную сессию браузера: страница и её гость уничтожаются, lease освобождает ядро. Вкладку DSH закрывает крестик; результат — в ui_status.closeTabResult.',
-      parameters: objectSchema({}, []),
+      parameters: objectSchema({ tabId: tabIdParam }, []),
       output: output(asText),
-      execute: () => {
+      execute: (args: Record<string, unknown>) => {
         requireTransport()
-        const command = enqueue('close_tab', {})
+        const tabId = String(args.tabId ?? '')
+        const command = enqueue('close_tab', tabId === '' ? {} : { tabId })
         return { queued: true, commandId: command.id, tab: command.tab }
       },
     },
@@ -1752,13 +1789,15 @@ function buildTools(): Array<Record<string, unknown>> {
       description: 'Обзор страницы: компактный список интерактивных узлов и заголовков со ссылками ref_N (как read_page в Claude). Возвращает дерево сразу; ref_N принимается в ui_act.',
       parameters: objectSchema({
         limit: { type: 'number', description: 'Сколько узлов вернуть, 10–200 (по умолчанию 120)' },
+        tabId: tabIdParam,
       }, []),
       output: output(asText),
       execute: async (args: Record<string, unknown>) => {
         requireTransport()
         const limit = typeof args.limit === 'number' ? Math.min(200, Math.max(10, args.limit)) : 120
         const requestedAt = Date.now()
-        const command = enqueue('read_page', { limit })
+        const tabId = String(args.tabId ?? '')
+        const command = enqueue('read_page', tabId === '' ? { limit } : { limit, tabId })
         // The panel answers asynchronously; waiting here keeps the tool honest —
         // otherwise the agent gets "queued" and has to guess with ui_find.
         for (let waited = 0; waited < 40; waited += 1) {
@@ -1801,17 +1840,76 @@ function buildTools(): Array<Record<string, unknown>> {
       },
     },
     {
+      name: 'ui_page_text',
+      description: 'Текст страницы, сначала article/main (как get_page_text в Claude). Возвращает plain text без HTML.',
+      parameters: objectSchema({
+        limit: { type: 'number', description: 'Максимум символов, 1000–20000 (по умолчанию 5000)' },
+        tabId: tabIdParam,
+      }, []),
+      output: output(asText),
+      execute: async (args: Record<string, unknown>) => {
+        requireTransport()
+        const limit = typeof args.limit === 'number' ? Math.min(20000, Math.max(1000, args.limit)) : 5000
+        const tabId = String(args.tabId ?? '')
+        const since = Date.now()
+        const command = enqueue('page_text', { ...(tabId === '' ? {} : { tabId }), limit })
+        const text = await waitForField('pageText', since)
+        return { url: text.url ?? null, title: text.title ?? null, text: text.text ?? '', truncated: text.truncated === true, commandId: command.id }
+      },
+    },
+    {
+      name: 'ui_network',
+      description: 'Ресурсы страницы по данным PerformanceObserver: URL, тип, длительность, размер; помечает медленные (≥400 мс) и тяжёлые (≥200 КБ).',
+      parameters: objectSchema({
+        limit: { type: 'number', description: 'Сколько последних записей вернуть, 10–200 (по умолчанию 100)' },
+        tabId: tabIdParam,
+      }, []),
+      output: output(asText),
+      execute: async (args: Record<string, unknown>) => {
+        requireTransport()
+        const limit = typeof args.limit === 'number' ? Math.min(200, Math.max(10, args.limit)) : 100
+        const tabId = String(args.tabId ?? '')
+        const since = Date.now()
+        const command = enqueue('network', { ...(tabId === '' ? {} : { tabId }), limit })
+        const result = await waitForField('network', since)
+        return { total: result.total ?? 0, slow: result.slow ?? 0, heavy: result.heavy ?? 0, entries: result.entries ?? [], commandId: command.id }
+      },
+    },
+    {
+      name: 'ui_inspect',
+      description: 'Точечный замер элемента: указанные CSS-свойства, bounding box и окружение. Заменяет полный evidence, когда нужно проверить конкретные стили.',
+      parameters: objectSchema({
+        selector: { type: 'string', description: 'CSS-селектор элемента' },
+        styles: { type: 'array', description: 'Список CSS-свойств (по умолчанию частые)', items: { type: 'string' } },
+        tabId: tabIdParam,
+      }, ['selector']),
+      output: output(asText),
+      execute: async (args: Record<string, unknown>) => {
+        requireTransport()
+        const selector = String(args.selector ?? '').trim()
+        if (selector === '') throw new Error('E_NO_PICK: пустой селектор')
+        const styles = Array.isArray(args.styles) ? args.styles.map(String).slice(0, 40) : []
+        const tabId = String(args.tabId ?? '')
+        const since = Date.now()
+        const command = enqueue('inspect', { ...(tabId === '' ? {} : { tabId }), selector, styles })
+        const result = await waitForField('inspect', since)
+        return { ...result, commandId: command.id }
+      },
+    },
+    {
       name: 'ui_select',
       description: 'Выбрать элемент по CSS-селектору без участия человека: строит тот же портрет (селектор, a11y, computed, box), что и клик в панели. Требует уникальности селектора.',
       parameters: objectSchema({
         selector: { type: 'string', description: 'CSS-селектор элемента' },
+        tabId: tabIdParam,
       }, ['selector']),
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
         requireTransport()
         const selector = String(args.selector ?? '').trim()
         if (selector === '') throw new Error('E_NO_PICK: пустой селектор')
-        const command = enqueue('select', { selector })
+        const tabId = String(args.tabId ?? '')
+        const command = enqueue('select', tabId === '' ? { selector } : { selector, tabId })
         return { queued: true, commandId: command.id, selector }
       },
     },
@@ -1823,6 +1921,7 @@ function buildTools(): Array<Record<string, unknown>> {
         selector: { type: 'string', description: 'Селектор цели (для scroll можно пусто)' },
         value: { type: 'string', description: 'Текст для type или Y для scroll' },
         ref: { type: 'string', description: 'ref_N из ui_read_page/ui_find вместо селектора' },
+        tabId: tabIdParam,
         items: {
           type: 'array',
           description: 'Пакет действий до 10: [{op, selector?, value?}]',
@@ -1868,7 +1967,8 @@ function buildTools(): Array<Record<string, unknown>> {
           selector = String(row.selector ?? '')
         }
         if (op !== 'scroll' && selector === '') throw new Error('E_NO_EFFECT: для click/type нужен selector или ref')
-        const command = enqueue('act', { op, selector, value: String(args.value ?? '') })
+        const tabId = String(args.tabId ?? '')
+        const command = enqueue('act', tabId === '' ? { op, selector, value: String(args.value ?? '') } : { op, selector, value: String(args.value ?? ''), tabId })
         return { queued: true, commandId: command.id, op, selector }
       },
     },
@@ -1877,12 +1977,14 @@ function buildTools(): Array<Record<string, unknown>> {
       description: 'Снять снимок страницы (или элемента) по команде агента. Пиксели в модель не передаются: возвращаются метаданные и путь к файлу, который открывает человек.',
       parameters: objectSchema({
         selector: { type: 'string', description: 'Селектор элемента; пусто — весь видимый экран' },
+        tabId: tabIdParam,
       }, []),
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
         requireTransport()
         const selector = String(args.selector ?? '')
-        const command = enqueue('capture', { selector })
+        const tabId = String(args.tabId ?? '')
+        const command = enqueue('capture', tabId === '' ? { selector } : { selector, tabId })
         return {
           queued: true,
           commandId: command.id,
@@ -2453,6 +2555,65 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'REV-1: host замечает чужой отпечаток сборки', pass: true, detail: 'revMatch=false для deadbeef1234' })
   } catch (error) {
     results.push({ name: 'REV-1: host замечает чужой отпечаток сборки', pass: false, detail: String(error) })
+  }
+
+  // Phase 2: tab addressing and a deeper console buffer.
+  try {
+    seedTransport()
+    const shot = call('ui_screenshot', { selector: 'a', tabId: 'tab-zz' }) as { queued?: boolean }
+    const capture = commands[commands.length - 1]
+    if (shot.queued !== true || capture?.kind !== 'capture' || capture.args.tabId !== 'tab-zz') {
+      throw new Error(`снимок не адресован вкладке: ${JSON.stringify(capture?.args)}`)
+    }
+    commands.length = 0
+
+    const select = call('ui_select', { selector: '#x', tabId: 'tab-yy' }) as { queued?: boolean }
+    const selectCommand = commands[commands.length - 1]
+    if (select.queued !== true || selectCommand?.args.tabId !== 'tab-yy') throw new Error('ui_select не адресован вкладке')
+    commands.length = 0
+
+    const savedConsole = client.console
+    client.console = Array.from({ length: 300 }, (_row, index) => ({ level: 0, message: `line-${index}` }))
+    const deep = call('ui_console', {}) as { total: number; matched: number }
+    client.console = savedConsole
+    if (deep.matched !== 200) throw new Error(`ui_console вернул ${deep.matched}, ожидалось 200`)
+    results.push({ name: 'P2-1: адресация вкладки и консоль 200 строк', pass: true, detail: 'capture/select несут tabId; console=200' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P2-1: адресация вкладки и консоль 200 строк', pass: false, detail: String(error) })
+  }
+
+  // Phase 2: page text, network and targeted inspect round-trip through the renderer.
+  try {
+    seedTransport()
+    const pending = call('ui_inspect', { selector: '#card', styles: ['color', 'gap'] }) as Promise<Record<string, unknown>>
+    const command = commands[commands.length - 1]
+    if (command?.kind !== 'inspect' || command.args.selector !== '#card') {
+      throw new Error(`inspect не поставлен: ${JSON.stringify(command)}`)
+    }
+    const reply = fakeResponse()
+    await handleRoute(fakeRequest({
+      inspect: { status: 'OK', selector: '#card', styles: { color: 'rgb(1, 2, 3)', gap: '8px' }, at: Date.now() },
+    }, 'POST', '/startapus-browser/client/event'), reply.res)
+    const result = await pending as { status?: string; styles?: Record<string, string> }
+    if (result.status !== 'OK' || result.styles?.color !== 'rgb(1, 2, 3)') {
+      throw new Error(`inspect вернул ${JSON.stringify(result)}`)
+    }
+    commands.length = 0
+
+    const textPending = call('ui_page_text', { limit: 2000 }) as Promise<{ text?: string }>
+    const textCommand = commands[commands.length - 1]
+    if (textCommand?.kind !== 'page_text') throw new Error('page_text не поставлен')
+    const textReply = fakeResponse()
+    await handleRoute(fakeRequest({
+      pageText: { status: 'OK', url: 'https://x.test/', title: 'X', text: 'hello world', truncated: false, at: Date.now() },
+    }, 'POST', '/startapus-browser/client/event'), textReply.res)
+    const text = await textPending
+    if (text.text !== 'hello world') throw new Error(`page_text вернул ${JSON.stringify(text)}`)
+    results.push({ name: 'P2-2: inspect и page_text возвращают результат', pass: true, detail: 'inspect styles + page_text text' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P2-2: inspect и page_text возвращают результат', pass: false, detail: String(error) })
   }
 
   // Human control blocks agent mutations.
