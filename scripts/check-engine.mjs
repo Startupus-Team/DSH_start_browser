@@ -343,8 +343,37 @@ await check('E16: восстановление гостя не превраща�
   return 'одно падение → одно восстановление; закрытие не считается'
 })
 
+await check('E17: серия падений останавливается (E_GUEST_LOOP), а не крутится вечно', async () => {
+  const realNow = Date.now
+  let clock = realNow()
+  Date.now = () => clock
+  try {
+    const hostStorm = new FakeElement('div')
+    body.appendChild(hostStorm)
+    await engine.showSession('storm', 'https://storm.example/', hostStorm)
+    const first = engine.guestOf('storm')
+    expect(first !== null, 'гость не создан')
+    first.fire('dom-ready')
+    const before = engine.engineState().counters.recoveries
+    for (let round = 0; round < 6; round += 1) {
+      const guest = engine.guestOf('storm')
+      if (guest === null) break
+      clock += 3100
+      guest.fire('render-process-gone')
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    const grown = engine.engineState().counters.recoveries - before
+    expect(grown <= 3, `восстановлений ${grown}, ожидалось не больше 3`)
+    const status = String(engine.engineState().status ?? '')
+    expect(status.includes('E_GUEST_LOOP') || engine.guestOf('storm') === null, `нет E_GUEST_LOOP: ${status}`)
+    return `остановился после ${grown} восстановлений`
+  } finally {
+    Date.now = realNow
+  }
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 16/16')
+console.log('ENGINE OK: 17/17')

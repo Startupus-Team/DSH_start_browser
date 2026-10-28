@@ -126,6 +126,9 @@ let lastNavAttempt: { url: string; ok: boolean; reason: string; hasGuest: boolea
 const listeners = new Set<() => void>()
 /** Panes currently mounted, by tab key (double mounts do not inflate the count). */
 const mountedPaneKeys = new Set<string>()
+/** Recent guest losses per tab; survives session replacement (a storm resets sessions). */
+const recoveryLedger = new Map<string, number[]>()
+
 /** How many times a pane was mounted — a remount is what reloads a page. */
 let panelMounts = 0
 
@@ -437,6 +440,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     counters.acquires += 1
     setStatus('запрос резервации guest…')
     const reservation = await bridge.acquire(WORKSPACE_KEY)
+    probe('lease:acquire', { tabId, lease: reservation.lease.slice(0, 12) })
     session.lease = reservation.lease
     setStatus(`резервация ok · partition ${reservation.partition}`)
     void report(base ?? (await probe()) ?? '', {}).catch(() => undefined)
@@ -480,8 +484,10 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
       consoleRing.push({ level, message: message.slice(0, 300) })
       while (consoleRing.length > 200) consoleRing.shift()
     })
-    const onLost = (kind: string) => (): void => {
-      handleGuestLoss(session, kind)
+    const onLost = (kind: string) => (event: Event): void => {
+      const detail = (event as CustomEvent<{ reason?: string; details?: string }>).detail
+      const reason = detail?.reason ?? detail?.details ?? ''
+      handleGuestLoss(session, reason === '' ? kind : `${kind}:${reason}`)
     }
     created.addEventListener('render-process-gone', onLost('render-process-gone'))
     created.addEventListener('crashed', onLost('crashed'))
@@ -538,6 +544,17 @@ function handleGuestLoss(session: Session, kind: string): void {
   const now = Date.now()
   if (now - session.lastRecoveryAt < 3000) return
   session.lastRecoveryAt = now
+  const recent = (recoveryLedger.get(session.tabId) ?? []).filter((at) => now - at < 10000)
+  if (recent.length >= 3) {
+    recoveryLedger.set(session.tabId, recent)
+    setStatus(`E_GUEST_LOOP: гость падает (${kind}) больше 3 раз за 10 с — остановил восстановление`)
+    session.guest = null
+    session.ready = false
+    notify()
+    return
+  }
+  recent.push(now)
+  recoveryLedger.set(session.tabId, recent)
   if (session.recoveryAttempts >= 3) {
     setStatus(`E_GUEST_LOOP: гость падает (${kind}) больше 3 раз — остановил восстановление, переоткройте вкладку`)
     session.guest = null
@@ -554,7 +571,13 @@ function handleGuestLoss(session: Session, kind: string): void {
   notify()
   const host = session.host
   const url = session.url.startsWith('about:blank') ? START_URL : session.url
-  probe('guest:lost', { tabId: session.tabId, kind, attempt: session.recoveryAttempts })
+  probe('guest:lost', {
+    tabId: session.tabId,
+    kind,
+    attempt: session.recoveryAttempts,
+    url: session.url.slice(0, 120),
+    lease: session.lease === null ? '' : session.lease.slice(0, 12),
+  })
   window.setTimeout(() => {
     if (sessions.get(session.tabId) !== session) return
     sessions.delete(session.tabId)
@@ -714,6 +737,7 @@ function releaseLease(session: Session): void {
   const lease = session.lease
   session.lease = null
   counters.releases += 1
+  probe('lease:release', { tabId: session.tabId, lease: lease.slice(0, 12), reason: session.ready ? 'close' : 'lost' })
   const bridge = browserBridge()
   if (bridge !== undefined) void bridge.release(lease).catch(() => undefined)
 }

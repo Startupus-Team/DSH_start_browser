@@ -84,6 +84,20 @@ if (missing.length > 0) {
   console.log('FRESH  сборка совпадает с исходниками (rev)')
 }
 console.log(`transport: ${String(health.body?.transport)} · stage: ${String(health.body?.stage)} · host: ${String(health.body?.urlHost)}`)
+// A leaked lease kills the next guest: recoveries must be covered by releases.
+const counters = health.body?.counters ?? {}
+if (typeof counters.recoveries === 'number' && typeof counters.releases === 'number' && counters.recoveries > counters.releases) {
+  console.log(`FAIL  утечка lease: recoveries ${counters.recoveries} > releases ${counters.releases} — каждый падение без release`)
+  failed += 1
+}
+if (typeof counters.recoveries === 'number' && counters.recoveries > 10) {
+  console.log(`FAIL  шторм восстановлений: recoveries ${counters.recoveries} — гость циклически пересоздаётся`)
+  failed += 1
+}
+if (typeof counters.acquires === 'number' && typeof counters.releases === 'number' && counters.acquires - counters.releases > 3) {
+  console.log(`FAIL  acquires ${counters.acquires} при releases ${counters.releases} — резервации копятся (лимит 3 в запасе)`)
+  failed += 1
+}
 if (health.body?.revMatch === false) {
   console.log(`FAIL  клиент прислал другой отпечаток сборки: ${String(health.body?.clientRev ?? 'нет')} ≠ ${expectedRev}`)
   failed += 1
