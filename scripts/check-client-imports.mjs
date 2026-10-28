@@ -64,7 +64,7 @@ const shortcutChecks = [
   ['keydown listener', indexSource.includes("addEventListener('keydown'")],
   ['обработчик Cmd+T', indexSource.includes("event.key.toLowerCase() !== 't'")],
   ['открытие вкладки', indexSource.includes('requestOpenTab(')],
-  ['подсказка в карточке', indexSource.includes('⌘T')],
+  ['подсказка в карточке', indexSource.includes('shortcutHint(') && readFileSync('src/client/engine.ts', 'utf8').includes('⌘T')],
 ]
 for (const [name, ok] of shortcutChecks) {
   if (!ok) {
