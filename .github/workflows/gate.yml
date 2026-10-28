@@ -1,0 +1,26 @@
+# Offline gate for every push/PR: the same command a human must run locally.
+name: gate
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install
+        run: npm install --no-audit --no-fund
+      - name: gate
+        run: npm run gate
+      - name: upload build fingerprints
+        if: always()
+        run: |
+          node scripts/build-rev.mjs || true
+          ls -l lib || true
