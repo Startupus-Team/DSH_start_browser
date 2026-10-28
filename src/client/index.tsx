@@ -220,43 +220,33 @@ export function apply(ctx: ClientContext): void {
     // Activate a mounted Startapus tab by clicking its chip in the kernel tab strip.
     setActivateFallback(() => {
       try {
-        const nodes = Array.from(document.querySelectorAll<HTMLElement>('[role="tab"], [role="button"], button, a'))
-        const total = nodes.length
-        for (const node of nodes) {
+        // Kernel chrome lives in shadow roots, so a plain querySelectorAll misses
+        // the tab chips entirely. Walk every element and every shadow root.
+        const all: HTMLElement[] = []
+        const walk = (root: Document | ShadowRoot | HTMLElement): void => {
+          const nodes = root.querySelectorAll<HTMLElement>('*')
+          for (const node of Array.from(nodes)) {
+            all.push(node)
+            if (node.shadowRoot !== null) walk(node.shadowRoot)
+          }
+        }
+        walk(document)
+        for (const node of all) {
           const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${node.textContent ?? ''}`
           if (!/Стартапус|Startapus/i.test(label)) continue
           if (node.closest('.dsh-startapus-browser') !== null) continue
+          if (node.getAttribute('aria-selected') === 'false') continue
           node.click()
+          void note('tab:activated', { label: label.slice(0, 60), tag: node.tagName.toLowerCase() })
           return true
         }
-        // Nothing matched: report the strip so the selector can be fixed from logs.
-        const rows: Array<Record<string, string>> = []
-        for (const node of Array.from(document.querySelectorAll<HTMLElement>('*'))) {
-          const cls = typeof node.className === 'string' ? node.className : ''
-          const role = node.getAttribute('role') ?? ''
-          const selected = node.getAttribute('aria-selected')
-          if (selected === null && !/tab/i.test(role) && !/tab/i.test(cls)) continue
-          const box = node.getBoundingClientRect()
-          rows.push({
-            tag: node.tagName.toLowerCase(),
-            role,
-            cls: cls.slice(0, 50),
-            label: (node.getAttribute('aria-label') ?? '').slice(0, 30),
-            title: (node.title ?? '').slice(0, 30),
-            text: (node.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 30),
-            selected: selected ?? '',
-            rect: `${Math.round(box.width)}x${Math.round(box.height)}`,
-          })
-          if (rows.length >= 20) break
-        }
-        void note('dom:tabs', { scanned: total, rows })
+        void note('dom:tabs', { scanned: all.length, chips: all.filter((node) => /Стартапус|Startapus/i.test(node.textContent ?? '')).length })
         return false
       } catch (error) {
         void note('dom:tabs:error', { error: String(error) })
         return false
       }
     })
-
     // ⌘⇧P picks an element: same gesture as the прицел button, catalog-visible.
     try {
       ctx.inject(['shortcuts'], (scope: ClientContext) => {

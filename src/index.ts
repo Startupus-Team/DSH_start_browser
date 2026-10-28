@@ -213,7 +213,7 @@ const tasks = new Map<string, ReviewTask>()
 /** taskId -> the verification currently travelling to the renderer. */
 const pendingVerifications = new Map<string, { commandId: string; at: number }>()
 /** Every client bundle instance that reported in: a stale one must not own page commands. */
-const clientInstances = new Map<string, { tabKey: string; attached: boolean; lastSeen: number }>()
+const clientInstances = new Map<string, { tabKey: string; attached: boolean; visible: boolean; lastSeen: number }>()
 /** tool name -> call timestamps inside the current window. */
 const callLog = new Map<string, number[]>()
 const RATE_WINDOW_MS = 60_000
@@ -985,7 +985,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         panelMounts: client.panelMounts,
         instances: [...clientInstances.entries()]
           .filter(([, row]) => Date.now() - row.lastSeen < 120000)
-          .map(([id, row]) => ({ id, attached: row.attached, tabKey: row.tabKey, ageMs: Date.now() - row.lastSeen })),
+          .map(([id, row]) => ({ id, attached: row.attached, visible: row.visible, tabKey: row.tabKey, ageMs: Date.now() - row.lastSeen })),
         revMatch: client.clientRev === '' ? null : client.clientRev === BUILD_REV,
         activeTab: client.engineActive,
         targetTab: client.engineActive,
@@ -1045,7 +1045,9 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       for (;;) {
         const index = commands.findIndex((row) => {
           if (row.tab !== key && row.tab !== '*') return false
-          if (pageKind(row.kind) && pollInstance !== undefined && !pollInstance.attached) return false
+          // A page command belongs to the one instance that both has a guest and is
+          // actually on screen; stale instances keep polling but take nothing.
+          if (pageKind(row.kind) && pollInstance !== undefined && (!pollInstance.attached || pollInstance.visible === false)) return false
           return true
         })
         if (index >= 0) {
@@ -1101,6 +1103,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         clientInstances.set(body.instanceId, {
           tabKey: typeof body.tabKey === 'string' ? body.tabKey : (previous?.tabKey ?? ''),
           attached: body.attached === true,
+          visible: body.visible === true,
           lastSeen: Date.now(),
         })
         if (previous === undefined || previous.attached !== (body.attached === true)) {
@@ -2950,7 +2953,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     if (empty.command !== undefined) throw new Error('команда ушла в экземпляр без гостя')
 
     const live = fakeResponse()
-    await handleRoute(fakeRequest({ instanceId: 'inst-live', attached: true }, 'POST', '/startapus-browser/client/event'), live.res)
+    await handleRoute(fakeRequest({ instanceId: 'inst-live', attached: true, visible: true }, 'POST', '/startapus-browser/client/event'), live.res)
     const delivered = fakeResponse()
     await handleRoute(fakeRequest({ tabKey: 'startapus-browser', instanceId: 'inst-live' }, 'POST', '/startapus-browser/client/poll'), delivered.res)
     const body = delivered.read().body as { command?: { kind?: string } }

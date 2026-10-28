@@ -209,7 +209,8 @@ export function subscribeEngine(listener: () => void): () => void {
 function notify(): void {
   try {
     const attached = [...sessions.values()].some((session) => session.ready && session.guest !== null && session.container.isConnected)
-    setReportMeta({ attached, instanceId: INSTANCE_ID, panels: mountedPaneKeys.size })
+    const visible = [...paneState.values()].some((state) => state.visible)
+    setReportMeta({ attached, visible, instanceId: INSTANCE_ID, panels: mountedPaneKeys.size })
   } catch {
     // meta is diagnostics only
   }
