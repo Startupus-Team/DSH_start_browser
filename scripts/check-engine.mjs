@@ -231,17 +231,20 @@ await check('E9: мёртвая сессия не маскирует живую'
 })
 
 await check('E10: навигация адресуется своей сессии', async () => {
-  const first = engine.listSessions().find((row) => engine.guestOf(row.tabId) !== null)
-  expect(first !== undefined, 'нет сессии с живым гостем')
+  const hostA = new FakeElement('div')
   const hostB = new FakeElement('div')
+  body.appendChild(hostA)
   body.appendChild(hostB)
+  await engine.showSession('nav-a', 'https://nav-a.example/', hostA)
   await engine.showSession('nav-b', 'https://nav-b.example/', hostB)
-  engine.guestOf('nav-b').fire('dom-ready')
-  const guestA = engine.guestOf(first.tabId)
-  expect(guestA !== null && engine.guestOf('nav-b') !== null, 'гости не созданы')
-  const beforeB = engine.guestOf('nav-b').loadedUrls.length
+  engine.guestOf('nav-a')?.fire('dom-ready')
+  engine.guestOf('nav-b')?.fire('dom-ready')
+  const guestA = engine.guestOf('nav-a')
+  const guestB = engine.guestOf('nav-b')
+  expect(guestA !== null && guestB !== null, 'гости не созданы для nav-a/nav-b')
+  const beforeB = guestB.loadedUrls.length
   guestA.loadURL('https://nav-a.example/next')
-  expect(engine.guestOf('nav-b').loadedUrls.length === beforeB, 'навигация A задела B')
+  expect(guestB.loadedUrls.length === beforeB, 'навигация A задела B')
   expect(guestA.loadedUrls.includes('https://nav-a.example/next'), 'навигация A не применилась')
   return 'A навигировался, B не тронут'
 })
