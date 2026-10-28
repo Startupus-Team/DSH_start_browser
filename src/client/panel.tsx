@@ -40,6 +40,7 @@ import {
   subscribeEngine,
 } from './engine'
 import { normalizeAddress } from './rules'
+import { focusStartapusTab } from './tabs'
 import { PICKER_POLL, PICKER_SCRIPT } from './picker-source'
 
 
@@ -105,7 +106,12 @@ function PanelChrome(props: PanelProps): React.ReactNode {
     // and a guest is only created from a mounted pane. Visibility then decides
     // whether it is shown.
     void showSession(tabKey, initialUrl, host).then(() => {
-      if (props.visible === false) hideSession(tabKey)
+      if (props.visible === false) {
+        hideSession(tabKey)
+        // A tab opened through the controller mounts hidden: front it so the kernel
+        // lays the pane out and the guest can attach at all.
+        focusStartapusTab(tabKey)
+      }
     })
     const observer = new ResizeObserver(() => {
       if (props.visible !== false) setSessionRect(tabKey, true)
