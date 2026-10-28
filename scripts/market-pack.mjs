@@ -15,6 +15,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+const useGit = process.argv.includes('--git-source')
+const gitRemote = 'https://github.com/Startupus-Team/DSH_start_browser'
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
 const version = String(pkg.version)
 const SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/
@@ -80,7 +82,13 @@ const index = {
         {
           version,
           publishTimestamp,
-          source: { type: 'npm' },
+          source: useGit
+            ? {
+                type: 'git',
+                url: gitRemote,
+                commit: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
+              }
+            : { type: 'npm' },
           engines: { dsh: '>=0.2.1-rc.3 <0.3.0' },
         },
       ],
@@ -98,7 +106,11 @@ ok('категория объявлена', plugin.metadata.category === undefin
 const entry = plugin.versions[0]
 ok('точная SemVer', SEMVER.test(entry.version), entry.version)
 ok('publishTimestamp — целые Unix-секунды', Number.isInteger(entry.publishTimestamp) && entry.publishTimestamp >= 0 && entry.publishTimestamp < 1e11)
-ok('source.type = npm | git', entry.source.type === 'npm' || entry.source.type === 'git')
+ok('source.type = npm | git', entry.source.type === 'npm' || entry.source.type === 'git', entry.source.type)
+if (entry.source.type === 'git') {
+  ok('git-коммит — 40 hex', /^[0-9a-f]{40}$/.test(entry.source.commit), entry.source.commit.slice(0, 12))
+  ok('git-url — HTTPS без query', /^https:\/\/[^?#]+$/.test(entry.source.url), entry.source.url)
+}
 const rangePart = /^(?:[~^]|>=|<=|>|<|=)?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 const isRange = (range) => range.trim().split(/\s+/).every((part) => part === '' || part === '*' || rangePart.test(part))
 ok('engines.dsh — SemVer-диапазон', isRange(entry.engines.dsh), entry.engines.dsh)
@@ -106,6 +118,8 @@ ok('версии не дублируются и отсортированы', new
 ok('иконка относительная', !/^https?:/i.test(plugin.icon))
 
 writeFileSync(join('dist', 'market-index.json'), JSON.stringify(index, null, 2) + '\n')
+// Root copy is what users point Discover at (raw.githubusercontent URL).
+writeFileSync('market-index.json', JSON.stringify(index, null, 2) + '\n')
 console.log(`\nindex: dist/market-index.json · версия ${version} · ts ${publishTimestamp}`)
 
 if (failures.length > 0) {
@@ -114,6 +128,7 @@ if (failures.length > 0) {
 }
 console.log('\nMARKET OK: артефакты готовы')
 console.log('\nДальше (нужен твой npm-аккаунт и HTTPS-хостинг индекса):')
-console.log(`  1. npm publish --access public            # публикует ${pkg.name}@${version}`)
+if (useGit) console.log(`  1. git push origin master                 # индекс ставит на коммит ${String(entry.source.commit).slice(0, 12)}`)
+else console.log(`  1. npm publish --access public            # публикует ${pkg.name}@${version}`)
 console.log('  2. положи dist/market-index.json на любой HTTPS URL (Pages, gist raw, свой сервер)')
 console.log('  3. в DSH: Plugins → More → Experimental plugins → Custom plugin markets → Discover → добавить URL индекса')

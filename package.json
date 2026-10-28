@@ -53,5 +53,14 @@
     "market": "node scripts/market-pack.mjs"
   },
   "icon": "./icon.svg",
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Startupus-Team/DSH_start_browser.git"
+  },
+  "homepage": "https://github.com/Startupus-Team/DSH_start_browser",
+  "bugs": {
+    "url": "https://github.com/Startupus-Team/DSH_start_browser/issues"
+  },
+  "author": "Startupus Team"
 }
