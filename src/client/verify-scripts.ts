@@ -89,7 +89,10 @@ export function evidenceScript(selector: string): string {
         while (node && node.nodeType === 1 && parts.length < 6) {
           var part = node.tagName.toLowerCase();
           if (node.id) { parts.unshift(part + '#' + node.id); break; }
-          var cls = (node.className || '').toString().trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          // Utility classes contain ':' and '[' — those break querySelector unless
+          // escaped, so every segment goes through CSS.escape.
+          var rawCls = (node.className || '').toString().trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          var cls = rawCls.map(function (name) { return (window.CSS && CSS.escape) ? CSS.escape(name) : name.replace(/[^a-zA-Z0-9_-]/g, '\\$&'); });
           if (cls.length) part += '.' + cls.join('.');
           var parent = node.parentElement;
           if (parent) {
@@ -188,9 +191,17 @@ export function actScript(op: string, selector: string, value: string): string {
       if (op === 'type') {
         if (el === null) return JSON.stringify({ status: 'MISSING' });
         el.focus();
-        el.value = value;
+        // React tracks values through the native setter: a plain `el.value = ...`
+        // leaves its state empty, so Enter-on-submit did nothing on startapus.
+        var proto = null;
+        if (typeof HTMLTextAreaElement !== 'undefined' && el instanceof HTMLTextAreaElement) proto = HTMLTextAreaElement.prototype;
+        else if (typeof HTMLInputElement !== 'undefined' && el instanceof HTMLInputElement) proto = HTMLInputElement.prototype;
+        var desc = proto === null ? null : Object.getOwnPropertyDescriptor(proto, 'value');
+        if (desc !== null && desc !== undefined && typeof desc.set === 'function') desc.set.call(el, value);
+        else el.value = value;
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: value, inputType: 'insertText' }));
         return JSON.stringify({ status: 'OK', op: op, length: value.length });
       }
       if (op === 'press') {
@@ -238,7 +249,10 @@ export function pageScanScript(limit: number): string {
         while (node && node.nodeType === 1 && parts.length < 5) {
           var part = node.tagName.toLowerCase();
           if (node.id) { parts.unshift(part + '#' + node.id); break; }
-          var cls = (node.className || '').toString().trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          // Utility classes contain ':' and '[' — those break querySelector unless
+          // escaped, so every segment goes through CSS.escape.
+          var rawCls = (node.className || '').toString().trim().split(/\\s+/).filter(Boolean).slice(0, 2);
+          var cls = rawCls.map(function (name) { return (window.CSS && CSS.escape) ? CSS.escape(name) : name.replace(/[^a-zA-Z0-9_-]/g, '\\$&'); });
           if (cls.length) part += '.' + cls.join('.');
           var parent = node.parentElement;
           if (parent) {
