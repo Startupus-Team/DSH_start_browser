@@ -3,6 +3,19 @@
 Основание: консилиум (`docs/council-consensus.md`), решения владельца (`docs/adr-001-owner-decisions.md`),
 аудит инструментов (`docs/tool-audit.md`). Обновлён 28.10 после живой проверки.
 
+## Фаза 0 — статус на 28.10 08:55 (живой процесс, сборка FRESH)
+
+| Шаг | Статус | Артефакт |
+|---|---|---|
+| 0.1 live/FRESH | ✅ | `npm run live` → `FRESH`, `LIVE OK` |
+| 0.2 `ui_read_page` → дерево | ✅ | 15 узлов `ref_1…ref_15` (ya.ru) |
+| 0.2 `ui_act { ref }` | ✅ | `act:done {"op":"click","status":"OK"}` |
+| 0.3 `ui_screenshot { selector }` | ✅ | `crop:saved 7 353 B` (элементный капчур заработал) |
+| 0.4 индикатор управления | ✅ | `/health` → `control: "agent"`, `agentActive: true` |
+| 0.5 `task_create → triaged → ui_verify` | ✅ | `task-556` → `verified`, `baseline: "16px"`, `observed: "16px"`, `reason: "font-size: 16px в допуске 0"` |
+| 0.6 адресная строка | ⏳ | диагностика `lastNavAttempt` включена; нужен ручной ввод |
+| 0.7 переключение/7 вкладок/закрытие | ⏳ | требует кликов по вкладкам |
+
 ## Текущее состояние (факты)
 
 - Сборка живая: `npm run live` → `FRESH`, `panels: 1`, страница `ya.ru` загружена.

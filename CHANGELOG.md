@@ -1,5 +1,21 @@
 # Changelog — startapus-browser
 
+## 0.19.4
+
+### Добавлено
+
+- **`scripts/dsh-cookie-doctor.mjs`** — инструмент для настоящей причины падений DSH 0.2.1-rc.3:
+  приложение копит cookie `dsh-auth-*` (по одной на запуск, ~16 КБ через ~70 запусков),
+  заголовок превышает лимит Node, хост отвечает ошибкой. Скрипт показывает количество и размер,
+  безопасно чистит с бэкапом по `--apply`.
+
+### Проверено вживую (фаза 0)
+
+- `ui_read_page` → 15 узлов; `ui_act { ref: ref_12 }` → `act:done OK`;
+- `ui_screenshot { selector: "form.mini-suggest" }` → `crop:saved 7 353 B`;
+- `control: "agent"`, `agentActive: true` (баннер управления);
+- `task-556`: `verified`, `baseline: 16px`, `observed: 16px`.
+
 ## 0.19.3
 
 ### Добавлено
