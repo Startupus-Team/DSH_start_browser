@@ -1136,7 +1136,8 @@ export function startEngine(): () => void {
       }
       const command = await poll(base as string)
       if (lastHostRev !== '' && lastHostRev !== CLIENT_REV) {
-        setStatus(`клиент устарел: rev ${CLIENT_REV}, host ${lastHostRev} — перезапустите DSH`)
+        // Cosmetic mismatch after a client-only build: log it, don't nag in the UI.
+        void note('rev:mismatch', { client: CLIENT_REV, host: lastHostRev })
       }
       if (command !== null) {
         await report(base as string, { lastCommand: { id: command.id, kind: command.kind, at: Date.now() } })
