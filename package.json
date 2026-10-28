@@ -1,6 +1,6 @@
 {
   "name": "startapus-browser",
-  "version": "0.1.0",
+  "version": "0.24.0",
   "description": "Startapus Browser — <webview> browser tab for the DSH right sidebar, with a DOM element picker.",
   "type": "module",
   "main": "lib/index.js",
@@ -44,6 +44,8 @@
     "check-rules": "node scripts/check-rules.mjs",
     "check-engine": "node scripts/check-engine.mjs",
     "check-imports": "node scripts/check-client-imports.mjs",
-    "check-tools": "node scripts/check-tools.mjs"
+    "check-tools": "node scripts/check-tools.mjs",
+    "gate": "npm run selftest && echo GATE OK",
+    "gate:live": "npm run gate && node scripts/live-check.mjs"
   }
 }
