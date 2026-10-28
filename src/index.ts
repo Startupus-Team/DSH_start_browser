@@ -1265,7 +1265,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       if (typeof body.hidden === 'boolean') client.hidden = body.hidden
       if (typeof body.counters === 'object' && body.counters !== null) {
         const incoming = body.counters as Record<string, unknown>
-        for (const key of ['acquires', 'releases', 'attachFailures', 'recoveries'] as const) {
+        for (const key of ['acquires', 'releases', 'attachFailures', 'recoveries', 'panics', 'navigations', 'loadErrors', 'crashes'] as const) {
           const value = incoming[key]
           if (typeof value === 'number' && value >= 0) client.counters[key] = value
         }
