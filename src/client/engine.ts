@@ -271,6 +271,7 @@ export function openInSession(tabId: string, rawUrl: string, fromPerson = false)
     return { ok: false, reason: normalized.reason, url: rawUrl }
   }
   const session = sessions.get(tabId)
+  void note('address:nav', { tabId, host: hostOf(normalized.url), hasSession: session !== undefined, ready: session?.ready === true, hasGuest: session?.guest != null })
   // Address bar is tab-scoped: falling back to another tab's guest navigated the
   // wrong page and then claimed "гость этой вкладки не создан" for this one.
   const guest = session?.guest ?? null
@@ -530,6 +531,11 @@ function guestFor(command: { args: Record<string, unknown> }): GuestElement | nu
   return session?.guest ?? null
 }
 
+/** Session of one tab, for the offline engine checks only. */
+export function sessionForTest(tabId: string): { ready: boolean } | undefined {
+  return sessions.get(tabId)
+}
+
 /** Guest of one tab. */
 export function guestOf(tabId: string): GuestElement | null {
   return sessions.get(tabId)?.guest ?? null
@@ -664,8 +670,19 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     created.addEventListener('did-finish-load', reapplyScheme)
     created.addEventListener('dom-ready', () => {
       session.ready = true
+      void note('guest:dom-ready', { tabId: session.tabId, navigated: session.navigated, pending: hostOf(session.pendingUrl) })
       installNetHook()
       reapplyScheme()
+      // An address typed before this guest was ready must not be lost, even if the first
+      // navigation already happened (a re-attached guest).
+      if (session.navigated && session.pendingUrl !== '') {
+        const queued = session.pendingUrl
+        session.pendingUrl = ''
+        counters.navigations += 1
+        created.loadURL?.(queued)
+        notify()
+        return
+      }
       // `dom-ready` fires for every document, so navigating here unconditionally
       // makes the page reload forever. Navigate exactly once.
       if (session.navigated) {
@@ -863,9 +880,19 @@ function handleGuestLoss(session: Session, kind: string): void {
   }, 0)
 }
 
+/** Host only: enough to follow a navigation in the log without recording paths or queries. */
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return ''
+  }
+}
+
 function onNavigate(session: Session, guest: GuestElement): void {
   try {
     const url = String(guest.getURL?.() ?? session.url)
+    void note('guest:navigated', { tabId: session.tabId, host: hostOf(url) })
     if (!url.startsWith('about:blank')) session.url = url
     setTabTitle(session.tabId, session.title === '' ? session.url : session.title)
     notify()

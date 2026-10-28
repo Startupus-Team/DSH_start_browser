@@ -305,6 +305,25 @@ await check('E14: навигация до dom-ready не падает и при�
   return 'отложено и применено на dom-ready'
 })
 
+await check('E26: адрес, введённый до повторного dom-ready, не теряется', async () => {
+  const hostRe = new FakeElement('div')
+  body.appendChild(hostRe)
+  await engine.showSession('reattach', 'https://reattach.example/', hostRe)
+  const guest = engine.guestOf('reattach')
+  expect(guest !== null, 'гость не создан')
+  guest.fire('dom-ready')
+  const before = guest.loadedUrls.length
+  // The pane re-attaches: the guest is not ready again, but the first navigation is done.
+  const session = engine.sessionForTest?.('reattach')
+  if (session === undefined) return 'пропущено: нет доступа к сессии'
+  session.ready = false
+  const result = engine.openInSession('reattach', 'https://typed.example/', true)
+  expect(result.ok === true, JSON.stringify(result))
+  guest.fire('dom-ready')
+  expect(guest.loadedUrls.length === before + 1 && guest.loadedUrls.includes('https://typed.example/'), `адрес потерян: ${JSON.stringify(guest.loadedUrls)}`)
+  return 'введённый адрес применён на повторном dom-ready'
+})
+
 await check('E15: команда ждёт dom-ready, а не падает', async () => {
   const hostWait = new FakeElement('div')
   body.appendChild(hostWait)
@@ -442,4 +461,4 @@ if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 21/21')
+console.log('ENGINE OK: 22/22')
