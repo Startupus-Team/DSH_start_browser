@@ -771,7 +771,7 @@ export function startEngine(): void {
           const view = guestFor(command)
           const limit = Math.min(200, Math.max(10, Number(command.args.limit ?? 120)))
           if (view === null || view.executeJavaScript === undefined) {
-            await report(base as string, { pageScan: { error: 'guest не готов' } })
+            await report(base as string, { pageScan: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
           } else {
             try {
               const raw = await withTimeout(view.executeJavaScript(pageScanScript(limit), false), 8000, 'E_TIMEOUT')
@@ -797,7 +797,7 @@ export function startEngine(): void {
             : []
           const results: Array<{ op: string; status: string; message: string }> = []
           if (view === null || view.executeJavaScript === undefined) {
-            results.push({ op: '-', status: 'ERROR', message: 'guest не готов' })
+            results.push({ op: '-', status: 'ERROR', message: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' })
           } else {
             for (const item of items) {
               try {
@@ -816,7 +816,7 @@ export function startEngine(): void {
           const view = guestFor(command)
           const limit = Math.min(20000, Math.max(1000, Number(command.args.limit ?? 5000)))
           if (view === null || view.executeJavaScript === undefined) {
-            await report(base as string, { pageText: { error: 'guest не готов' } })
+            await report(base as string, { pageText: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
           } else {
             try {
               const raw = await withTimeout(view.executeJavaScript(pageTextScript(limit), false), 6000, 'E_TIMEOUT')
@@ -830,7 +830,7 @@ export function startEngine(): void {
           const view = guestFor(command)
           const limit = Math.min(200, Math.max(10, Number(command.args.limit ?? 100)))
           if (view === null || view.executeJavaScript === undefined) {
-            await report(base as string, { network: { error: 'guest не готов' } })
+            await report(base as string, { network: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
           } else {
             try {
               const raw = await withTimeout(view.executeJavaScript(networkScript(limit), false), 6000, 'E_TIMEOUT')
@@ -845,7 +845,7 @@ export function startEngine(): void {
           const selector = String(command.args.selector ?? '')
           const styles = Array.isArray(command.args.styles) ? command.args.styles.map(String).slice(0, 40) : []
           if (view === null || view.executeJavaScript === undefined) {
-            await report(base as string, { inspect: { error: 'guest не готов' } })
+            await report(base as string, { inspect: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
           } else {
             try {
               const raw = await withTimeout(view.executeJavaScript(inspectScript(selector, styles), false), 6000, 'E_TIMEOUT')
@@ -1009,7 +1009,7 @@ export function startEngine(): void {
             : []
           setStatus(`агент: проверяю область (${covered.length} элементов)`)
           if (view === null || view.executeJavaScript === undefined) {
-            await report(base as string, { coverage: { taskId, error: 'guest недоступен' } })
+            await report(base as string, { coverage: { taskId, error: 'E_GUEST_GONE: гость вкладки недоступен' } })
           } else {
             const reload = verifyNeedsReload(command.args)
             if (reload) view.reload?.()
@@ -1094,7 +1094,7 @@ export function startEngine(): void {
           const view = guestFor(command)
           const target = Number(command.args.width ?? 0)
           if (view === null || view.executeJavaScript === undefined || view.setZoomFactor === undefined) {
-            await report(base as string, { viewportResult: { width: target, innerWidth: 0, zoom: 1, error: 'guest не готов' } })
+            await report(base as string, { viewportResult: { width: target, innerWidth: 0, zoom: 1, error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
           } else {
             try {
               const readWidth = async (): Promise<number> => {
@@ -1126,7 +1126,7 @@ export function startEngine(): void {
           const property = String(command.args.property ?? '')
           setStatus(`агент: проверяю ${property === '' ? method : property}`)
           if (view === null || view.executeJavaScript === undefined) {
-            await report(base as string, { verify: { taskId, commandId: command.id, error: 'guest недоступен' } })
+            await report(base as string, { verify: { taskId, commandId: command.id, error: 'E_GUEST_GONE: гость вкладки недоступен' } })
           } else {
             const reload = verifyNeedsReload(command.args)
             if (reload) view.reload?.()

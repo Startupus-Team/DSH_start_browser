@@ -60,6 +60,20 @@ for (const file of files) {
 // Shortcut wiring must not silently disappear again (it broke once when the
 // listener was replaced by a kernel registration that did not bind).
 const indexSource = readFileSync('src/client/index.tsx', 'utf8')
+const pickerSource = readFileSync('src/client/picker-source.ts', 'utf8')
+const engineSource = readFileSync('src/client/engine.ts', 'utf8')
+const pickerChecks = [
+  ['нонс в payload пикера', pickerSource.includes('__startapusNonce')],
+  ['проверка нонса в панели', readFileSync('src/client/panel.tsx', 'utf8').includes('pick.nonce !== nonce')],
+  ['E_GUEST_GONE в движке', engineSource.includes('E_GUEST_GONE')],
+]
+for (const [name, ok] of pickerChecks) {
+  if (!ok) {
+    failed += 1
+    console.log(`FAIL  пикер: нет «${name}»`)
+  }
+}
+
 const shortcutChecks = [
   ['keydown listener', indexSource.includes("addEventListener('keydown'")],
   ['обработчик Cmd+T', indexSource.includes("event.key.toLowerCase() !== 't'")],

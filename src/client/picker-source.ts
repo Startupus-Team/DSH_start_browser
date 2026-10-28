@@ -269,6 +269,18 @@ export const PICKER_SCRIPT = `
     function finish(value) {
       if (done) return;
       done = true;
+      // Bind the payload to the nonce the panel generated for this picker run:
+      // a stale or foreign payload is rejected by the panel instead of trusted.
+      var nonce = window.__startapusNonce || '';
+      if (typeof value === 'string' && value.charAt(0) === '{') {
+        try {
+          var parsed = JSON.parse(value);
+          parsed.nonce = nonce;
+          value = JSON.stringify(parsed);
+        } catch (error) {
+          value = 'ERROR:' + String(error && error.message ? error.message : error);
+        }
+      }
       window.__startapusPick = value;
       cleanup();
     }

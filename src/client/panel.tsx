@@ -136,13 +136,21 @@ function PanelChrome(props: PanelProps): React.ReactNode {
     if (!next) return
     void (async () => {
       try {
+        const nonce = `pick-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+        await runInActive(`window.__startapusNonce = ${JSON.stringify(nonce)}`, 3000)
         await runInActive(PICKER_SCRIPT, 10000)
         for (;;) {
           await new Promise((resolve) => setTimeout(resolve, 600))
           if (!pickingRef.current) return
           const raw = await runInActive(PICKER_POLL, 5000).catch(() => null)
           if (typeof raw !== 'string' || raw === '') continue
-          const pick = JSON.parse(raw) as ElementPick
+          const pick = JSON.parse(raw) as ElementPick & { nonce?: string }
+          if (pick.nonce !== nonce) {
+            setStatus('выбор отклонён: результат не от этой сессии пикера')
+            void runInActive('window.__startapusPick = undefined', 2000).catch(() => undefined)
+            continue
+          }
+          void runInActive('window.__startapusPick = undefined', 2000).catch(() => undefined)
           pickingRef.current = false
           setPicking(false)
           setEvidence(pick)

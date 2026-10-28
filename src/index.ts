@@ -2742,6 +2742,21 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'SEC-2: чужие Origin/методы не управляют браузером', pass: false, detail: String(error) })
   }
 
+  // Security: a missing guest is reported as E_GUEST_GONE, not a silent failure.
+  try {
+    seedTransport()
+    const beat = fakeResponse()
+    await handleRoute(fakeRequest({
+      actResult: { op: 'click', status: 'ERROR', message: 'E_GUEST_GONE: гость вкладки не создан' },
+    }, 'POST', '/startapus-browser/client/event'), beat.res)
+    if (client.lastAct?.message.includes('E_GUEST_GONE') !== true) {
+      throw new Error(`lastAct=${JSON.stringify(client.lastAct)}`)
+    }
+    results.push({ name: 'SEC-3: E_GUEST_GONE доходит до агента', pass: true, detail: 'lastAct.message содержит E_GUEST_GONE' })
+  } catch (error) {
+    results.push({ name: 'SEC-3: E_GUEST_GONE доходит до агента', pass: false, detail: String(error) })
+  }
+
   // Human control blocks agent mutations.
   try {
     seedTransport()
