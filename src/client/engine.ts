@@ -114,6 +114,9 @@ let focusTabRequested: ((tabId: string) => boolean) | null = null
 /** DOM fallback: click our guide card (the kernel then opens the tab properly). */
 let guideCardFallback: (() => boolean) | null = null
 /** Last address-bar attempt, reported so a silent failure becomes visible. */
+/** Test hook: wait for a ready guest the way commands do. */
+export const awaitReadyForTest = readyView
+
 /** What the shortcuts catalog actually accepted (reported for diagnosis). */
 let shortcutState: { id: string; keys: string; ok: boolean; error: string } | null = null
 let lastNavAttempt: { url: string; ok: boolean; reason: string; hasGuest: boolean; hasLoadURL: boolean; at: number } | null = null
@@ -296,6 +299,31 @@ export function activeGuest(): GuestElement | null {
       activeTabId = session.tabId
       return session.guest
     }
+  }
+  return null
+}
+
+/**
+ * Guest addressed by a command, waiting for `dom-ready` when needed.
+ * Electron throws "The WebView must be attached to the DOM and the dom-ready
+ * event emitted before this method can be called" for any call before that.
+ */
+async function readyView(command: { args: Record<string, unknown> }, timeoutMs = 3000): Promise<GuestElement | null> {
+  const tabId = String(command.args.tabId ?? '')
+  const preferred = tabId !== '' ? sessions.get(tabId) : sessions.get(activeTabId ?? '')
+  const deadline = Date.now() + timeoutMs
+  let candidate = preferred
+  for (;;) {
+    if (candidate !== undefined && candidate.guest !== null && candidate.ready) return candidate.guest
+    if (Date.now() >= deadline) break
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    if (candidate === undefined || candidate.guest === null) {
+      candidate = sessions.get(activeTabId ?? '') ?? candidate
+    }
+  }
+  // Fall back to any ready page rather than failing the whole command.
+  for (const session of sessions.values()) {
+    if (session.ready && session.guest !== null) return session.guest
   }
   return null
 }
@@ -811,7 +839,7 @@ export function startEngine(): () => void {
           setStatus('агент: выбор элемента')
           pickRequested()
         } else if (command.kind === 'read_page') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           const limit = Math.min(200, Math.max(10, Number(command.args.limit ?? 120)))
           if (view === null || view.executeJavaScript === undefined) {
             await report(base as string, { pageScan: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
@@ -834,7 +862,7 @@ export function startEngine(): () => void {
           setStatus('агент: пакет действий отклонён — управление у вас')
         } else if (command.kind === 'act_batch') {
           noteAgentAction()
-          const view = guestFor(command)
+          const view = await readyView(command)
           const items = Array.isArray(command.args.items)
             ? command.args.items as Array<{ op: string; selector: string; value: string }>
             : []
@@ -856,7 +884,7 @@ export function startEngine(): () => void {
           await report(base as string, { actResults: results })
           setStatus(`пакет действий: ${results.filter((row) => row.status === 'OK').length}/${results.length} выполнено`)
         } else if (command.kind === 'page_text') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           const limit = Math.min(20000, Math.max(1000, Number(command.args.limit ?? 5000)))
           if (view === null || view.executeJavaScript === undefined) {
             await report(base as string, { pageText: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
@@ -870,7 +898,7 @@ export function startEngine(): () => void {
             }
           }
         } else if (command.kind === 'network') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           const limit = Math.min(200, Math.max(10, Number(command.args.limit ?? 100)))
           if (view === null || view.executeJavaScript === undefined) {
             await report(base as string, { network: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
@@ -884,7 +912,7 @@ export function startEngine(): () => void {
             }
           }
         } else if (command.kind === 'inspect') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           const selector = String(command.args.selector ?? '')
           const styles = Array.isArray(command.args.styles) ? command.args.styles.map(String).slice(0, 40) : []
           if (view === null || view.executeJavaScript === undefined) {
@@ -899,7 +927,7 @@ export function startEngine(): () => void {
             }
           }
         } else if (command.kind === 'guest_state') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           if (view === null) {
             await report(base as string, { guestState: { error: 'guest не создан' } })
           } else {
@@ -945,7 +973,7 @@ export function startEngine(): () => void {
           consoleRing.length = 0
           setStatus('консоль очищена')
         } else if (command.kind === 'select') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           const selector = String(command.args.selector ?? '')
           if (view === null || view.executeJavaScript === undefined) {
             setStatus('выбор по селектору: guest не готов')
@@ -977,7 +1005,7 @@ export function startEngine(): () => void {
           setStatus('агент: действие отклонено — управление у вас')
         } else if (command.kind === 'act') {
           noteAgentAction()
-          const view = guestFor(command)
+          const view = await readyView(command)
           const op = String(command.args.op ?? '')
           const selector = String(command.args.selector ?? '')
           const value = String(command.args.value ?? '')
@@ -996,7 +1024,7 @@ export function startEngine(): () => void {
         } else if (command.kind === 'capture') {
           const selector = String(command.args.selector ?? '')
           await report(base as string, { captureStage: { step: 'start', selector } })
-          const view = guestFor(command)
+          const view = await readyView(command)
           await report(base as string, { captureStage: { step: 'guest', hasView: view !== null, hasCapture: view?.capturePage !== undefined } })
           if (view === null || view.capturePage === undefined) {
             setStatus('снимок недоступен: capturePage нет')
@@ -1045,7 +1073,7 @@ export function startEngine(): () => void {
             }
           }
         } else if (command.kind === 'verify_area') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           const taskId = String(command.args.taskId ?? '')
           const covered = Array.isArray(command.args.covered)
             ? command.args.covered as Array<{ tag: string; id: string; classes: string }>
@@ -1082,7 +1110,7 @@ export function startEngine(): () => void {
             }
           }
         } else if (command.kind === 'pick_area') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           setStatus('агент: выделите область мышью · Esc — отмена')
           if (view === null || view.executeJavaScript === undefined) {
             setStatus('выделение области недоступно: guest не готов')
@@ -1122,7 +1150,7 @@ export function startEngine(): () => void {
           }
         } else if (command.kind === 'viewport') {
           const zoom = Number(command.args.zoom ?? 1)
-          const view = guestFor(command)
+          const view = await readyView(command)
           if (view !== null && view.setZoomFactor !== undefined && Number.isFinite(zoom)) {
             try {
               view.setZoomFactor(Math.min(2, Math.max(0.5, zoom)))
@@ -1134,7 +1162,7 @@ export function startEngine(): () => void {
         } else if (command.kind === 'viewport_width') {
           // Approximate device-width emulation: Electron zoom changes the CSS
           // viewport, so targeting innerWidth works without CDP.
-          const view = guestFor(command)
+          const view = await readyView(command)
           const target = Number(command.args.width ?? 0)
           if (view === null || view.executeJavaScript === undefined || view.setZoomFactor === undefined) {
             await report(base as string, { viewportResult: { width: target, innerWidth: 0, zoom: 1, error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)' } })
@@ -1162,7 +1190,7 @@ export function startEngine(): () => void {
             }
           }
         } else if (command.kind === 'verify') {
-          const view = guestFor(command)
+          const view = await readyView(command)
           const taskId = String(command.args.taskId ?? '')
           const target = String(command.args.selector ?? '')
           const method = String(command.args.method ?? 'computed')

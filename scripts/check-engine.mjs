@@ -306,8 +306,22 @@ await check('E14: навигация до dom-ready не падает и при�
   return 'отложено и применено на dom-ready'
 })
 
+await check('E15: команда ждёт dom-ready, а не падает', async () => {
+  const hostWait = new FakeElement('div')
+  body.appendChild(hostWait)
+  await engine.showSession('wait', 'https://wait.example/', hostWait)
+  const guest = engine.guestOf('wait')
+  expect(guest !== null, 'гость не создан')
+  const early = await engine.awaitReadyForTest({ args: {} }, 150)
+  expect(early === null, 'недозрелый гость отдан как готовый')
+  guest.fire('dom-ready')
+  const late = await engine.awaitReadyForTest({ args: {} }, 150)
+  expect(late === guest, 'после dom-ready гость не найден')
+  return 'до dom-ready null, после — тот же гость'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 14/14')
+console.log('ENGINE OK: 15/15')

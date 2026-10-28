@@ -1870,12 +1870,12 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
           const scan = client.pageScan
           if (scan !== null && scan.at >= requestedAt) {
             if (scan.error !== '') throw new Error(`E_SCAN: ${scan.error}`)
-            return {
+            return untrusted({
               url: scan.url,
               total: scan.total,
               items: scan.items.slice(0, limit),
               hint: 'передавайте ref из items в ui_act вместо CSS-селектора',
-            }
+            }, 'read_page')
           }
           await new Promise((resolve) => setTimeout(resolve, 100))
         }
