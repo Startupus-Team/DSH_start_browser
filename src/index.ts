@@ -222,6 +222,7 @@ const TOOL_LIMITS: Record<string, number> = {
   ui_act: 20,
   ui_screenshot: 15,
   ui_focus_tab: 15,
+  ui_activate_tab: 10,
   ui_page_text: 20,
   ui_network: 20,
   ui_inspect: 30,
@@ -1593,6 +1594,17 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         const tabId = String(args.tabId ?? '')
         const command = enqueue('close_tab', tabId === '' ? {} : { tabId })
         return { queued: true, commandId: command.id, tab: command.tab }
+      },
+    },
+    {
+      name: 'ui_activate_tab',
+      description: 'Активировать вкладку Startapus, если её pane смонтирован скрытым (вкладка есть, но панель не показывает страницу). Работает через focus(tabId) и резервный клик по ярлыку; результат — в ui_status.panelStatus.',
+      parameters: objectSchema({}, []),
+      output: output(asText),
+      execute: () => {
+        requireTransport()
+        const command = enqueue('activate_self', {})
+        return { queued: true, commandId: command.id, hint: 'проверьте ui_status: panelStatus и sessionsCount' }
       },
     },
     {

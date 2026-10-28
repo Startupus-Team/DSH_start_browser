@@ -1121,6 +1121,10 @@ export function startEngine(): () => void {
               await report(base as string, { guestState: { error: String(error), getURL: String(view.getURL?.() ?? '') } })
             }
           }
+        } else if (command.kind === 'activate_self') {
+          const activated = activateOwnTab()
+          setStatus(activated ? 'активирую вкладку кликом по ярлыку' : 'не нашёл ярлык вкладки в полосе')
+          await report(base as string, { activateResult: { activated, at: Date.now() } })
         } else if (command.kind === 'focus_tab') {
           const target = String(command.args.tabId ?? '')
           // Bound pane actions first; the navigation controller's focus(tabId)
