@@ -40,6 +40,7 @@ import {
   subscribeEngine,
 } from './engine'
 import { normalizeAddress } from './rules'
+import { activateOwnTab } from './engine'
 import { focusStartapusTab } from './tabs'
 import { PICKER_POLL, PICKER_SCRIPT } from './picker-source'
 
@@ -111,6 +112,11 @@ function PanelChrome(props: PanelProps): React.ReactNode {
         // A tab opened through the controller mounts hidden: front it so the kernel
         // lays the pane out and the guest can attach at all.
         focusStartapusTab(tabKey)
+        // `focus(tabId)` is not always available in the plugin context; clicking the
+        // tab in the strip is the gesture the kernel definitely handles.
+        window.setTimeout(() => {
+          if (props.visible !== true) activateOwnTab()
+        }, 400)
       }
     })
     const observer = new ResizeObserver(() => {

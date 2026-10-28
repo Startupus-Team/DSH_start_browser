@@ -116,6 +116,8 @@ let openTabRequested: ((url: string) => boolean) | null = null
 let focusTabRequested: ((tabId: string) => boolean) | null = null
 /** DOM fallback: click our guide card (the kernel then opens the tab properly). */
 let guideCardFallback: (() => boolean) | null = null
+/** DOM fallback: click our tab in the kernel tab strip to activate its pane. */
+let activateTabFallback: (() => boolean) | null = null
 /** Last address-bar attempt, reported so a silent failure becomes visible. */
 /** Test hook: wait for a ready guest the way commands do. */
 export const awaitReadyForTest = readyView
@@ -295,6 +297,21 @@ export function requestOpenTab(url = ''): { ok: boolean; via: 'pane' | 'controll
 /** Install the DOM fallback used when no pane exists yet. */
 export function setGuideFallback(run: () => boolean): void {
   guideCardFallback = run
+}
+
+/** Install the DOM fallback that activates an already mounted Startapus tab. */
+export function setActivateFallback(run: () => boolean): void {
+  activateTabFallback = run
+}
+
+/** Try to front one of our tabs after a deferred creation. */
+export function activateOwnTab(): boolean {
+  if (activateTabFallback === null) return false
+  try {
+    return activateTabFallback()
+  } catch {
+    return false
+  }
 }
 
 /** The human takes the page back: agent mutations are refused from now on. */
