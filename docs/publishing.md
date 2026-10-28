@@ -46,7 +46,7 @@ Experimental plugins → «Custom plugin markets»**. После включен�
 | Что | Адрес |
 |---|---|
 | Репозиторий | https://github.com/Startupus-Team/DSH_start_browser |
-| Индекс маркета (его добавляют в Discover) | https://raw.githubusercontent.com/Startupus-Team/DSH_start_browser/master/market-index.json |
+| Индекс маркета (его добавляют в Discover) | https://cdn.jsdelivr.net/gh/Startupus-Team/DSH_start_browser@master/market-index.json |
 | Иконка индекса | https://raw.githubusercontent.com/Startupus-Team/DSH_start_browser/master/icon.svg |
 | Версия в индексе | 0.25.0, `source.type = git`, закреплённый коммит |
 
@@ -54,7 +54,7 @@ Experimental plugins → «Custom plugin markets»**. После включен�
 
 1. **Plugins → More → Experimental plugins → «Custom plugin markets»** — включить.
 2. **Problem → Discover → Add source** — вставить
-   `https://raw.githubusercontent.com/Startupus-Team/DSH_start_browser/master/market-index.json`.
+   `https://cdn.jsdelivr.net/gh/Startupus-Team/DSH_start_browser@master/market-index.json`.
 3. Выбрать **Startapus Browser** → **Install** (DSH поставит бандл из git-коммита).
 4. Перезапустить DSH; открыть правый сайдбар и нажать **`⌘T`**.
 

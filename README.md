@@ -227,7 +227,7 @@ node scripts/build-rev.mjs   # отпечаток сборки
 
 1. В DSH: **Plugins → More → Experimental plugins → «Custom plugin markets»** — включить.
 2. **Discover → Add source** → вставить
-   `https://raw.githubusercontent.com/Startupus-Team/DSH_start_browser/master/market-index.json`
+   `https://cdn.jsdelivr.net/gh/Startupus-Team/DSH_start_browser@master/market-index.json`
 3. Установить **Startapus Browser**, перезапустить DSH, открыть правый сайдбар и нажать `⌘T`.
 
 Подробности и регламент релиза — [`docs/publishing.md`](docs/publishing.md). Сборка индекса:
