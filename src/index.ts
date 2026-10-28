@@ -19,6 +19,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
+import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 
 /** Append one diagnostic line; host registration must be observable without DevTools. */
@@ -1512,6 +1513,47 @@ function fail(code: string, message: string, hint?: string): never {
   throw error
 }
 
+/** Bundle the review queue and recent crops into one zip for hand-off. */
+function exportBundle(cropLimit = 50): { path: string; bytes: number; tasks: number; crops: number } {
+  const exportDir = join(homedir(), '.dsh')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const target = join(exportDir, `startapus-export-${stamp}.zip`)
+  const staging = join(tmpdir(), `startapus-export-${process.pid}-${Date.now()}`)
+  mkdirSync(staging, { recursive: true })
+  try {
+    const storeFile = storePath()
+    if (existsSync(storeFile)) writeFileSync(join(staging, 'tasks.json'), readFileSync(storeFile))
+    const cropDir = join(homedir(), '.dsh', 'startapus-crops')
+    let crops = 0
+    if (cropLimit > 0 && existsSync(cropDir)) {
+      mkdirSync(join(staging, 'crops'), { recursive: true })
+      const files = readdirSync(cropDir).filter((name) => name.endsWith('.png')).sort().slice(-cropLimit)
+      for (const name of files) {
+        writeFileSync(join(staging, 'crops', name), readFileSync(join(cropDir, name)))
+        crops += 1
+      }
+    }
+    const manifest = {
+      exportedAt: new Date().toISOString(),
+      buildRev: BUILD_REV,
+      tasks: tasks.size,
+      crops,
+      directories: ['tasks.json', crops > 0 ? 'crops/' : ''],
+    }
+    writeFileSync(join(staging, 'manifest.json'), JSON.stringify(manifest, null, 2))
+    execFileSync('zip', ['-r', '-q', target, '.'], { cwd: staging })
+    const bytes = statSync(target).size
+    probe('export:done', { path: target, bytes, tasks: tasks.size, crops })
+    return { path: target, bytes, tasks: tasks.size, crops }
+  } finally {
+    try {
+      rmSync(staging, { recursive: true, force: true })
+    } catch {
+      // staging cleanup is best effort
+    }
+  }
+}
+
 /** Wrap page-derived data: the model must treat it as data, never instructions. */
 function untrusted<T>(data: T, source = 'page'): { trust: { untrusted: true; source: string; hash: string }; data: T } {
   const hash = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 8)
@@ -1790,6 +1832,19 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         })
         pendingVerifications.set(id, { commandId: command.id, at: Date.now() })
         return { queued: true, commandId: command.id, taskId: id, method: task.acceptance.method, property: task.acceptance.property }
+      },
+    },
+    {
+      name: 'ui_export',
+      description: 'Собрать zip с очередью задач ревью и последними снимками (для передачи в работу). Возвращает путь и размер.',
+      parameters: objectSchema({
+        crops: { type: 'number', description: 'Сколько последних снимков включить, 0–200 (по умолчанию 50)' },
+      }, []),
+      output: output(asText),
+      execute: (args: Record<string, unknown>) => {
+        const crops = typeof args.crops === 'number' ? Math.min(200, Math.max(0, args.crops)) : 50
+        const bundle = exportBundle(crops)
+        return { path: bundle.path, bytes: bundle.bytes, tasks: bundle.tasks, crops: bundle.crops }
       },
     },
     {
@@ -2772,6 +2827,17 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'SEC-3: E_GUEST_GONE доходит до агента', pass: true, detail: 'lastAct.message содержит E_GUEST_GONE' })
   } catch (error) {
     results.push({ name: 'SEC-3: E_GUEST_GONE доходит до агента', pass: false, detail: String(error) })
+  }
+
+  // Phase D: the review queue can be handed off as one archive.
+  try {
+    const bundle = call('ui_export', { crops: 0 }) as { path?: string; bytes?: number; tasks?: number }
+    if (typeof bundle.path !== 'string' || !existsSync(bundle.path)) throw new Error('архив не создан')
+    if (typeof bundle.bytes !== 'number' || bundle.bytes <= 0) throw new Error(`пустой архив: ${String(bundle.bytes)}`)
+    rmSync(bundle.path, { force: true })
+    results.push({ name: 'D4: экспорт задач в zip', pass: true, detail: `${bundle.tasks ?? 0} задач, ${bundle.bytes} байт` })
+  } catch (error) {
+    results.push({ name: 'D4: экспорт задач в zip', pass: false, detail: String(error) })
   }
 
   // Human control blocks agent mutations.
