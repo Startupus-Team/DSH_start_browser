@@ -90,8 +90,8 @@ let base: string | null = null
 let closeRequested: () => boolean = () => false
 let pickRequested: () => void = () => undefined
 const listeners = new Set<() => void>()
-/** How many panes are currently mounted — a pane is the only place a guest can live. */
-let mountedPanels = 0
+/** Panes currently mounted, by tab key (double mounts do not inflate the count). */
+const mountedPaneKeys = new Set<string>()
 
 /** Read the browser bridge exposed by the DSH desktop preload. */
 function browserBridge(): DesktopBridge | undefined {
@@ -101,20 +101,20 @@ function browserBridge(): DesktopBridge | undefined {
 
 /** Current engine snapshot for views. */
 /** Register a mounted pane (called by the view on mount/unmount). */
-export function notePanelMounted(): void {
-  mountedPanels += 1
+export function notePanelMounted(tabKey: string): void {
+  mountedPaneKeys.add(tabKey)
   notify()
 }
 
 /** Unregister a mounted pane. */
-export function notePanelUnmounted(): void {
-  mountedPanels = Math.max(0, mountedPanels - 1)
+export function notePanelUnmounted(tabKey: string): void {
+  mountedPaneKeys.delete(tabKey)
   notify()
 }
 
 /** Panes currently mounted. */
 export function panelsMounted(): number {
-  return mountedPanels
+  return mountedPaneKeys.size
 }
 
 export function engineState(): EngineState {
@@ -447,12 +447,9 @@ export function disposeSession(tabId: string): boolean {
 function collectIdleSessions(): void {
   const now = Date.now()
   for (const session of [...sessions.values()]) {
-    // The pane DOM is gone (tab closed/remounted): the guest is dead and the
-    // session would only confuse activation and capture.
-    if (!session.container.isConnected) {
-      disposeSession(session.tabId)
-      continue
-    }
+    // Ghost sessions are handled on activation (`showSession`); a detached
+    // container here may simply mean React is re-mounting the pane, so the sweep
+    // only drops pages that nobody looked at for a long time.
     if (session.tabId === activeTabId) continue
     if (now - session.lastActiveAt < SESSION_IDLE_MS) continue
     closeSession(session.tabId)
@@ -936,7 +933,7 @@ export function startEngine(): void {
         counters: counters,
         sessions: listSessions(),
         activeTab: activeTabId,
-        panels: mountedPanels,
+        panels: mountedPaneKeys.size,
       })
     }
 

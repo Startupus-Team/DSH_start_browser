@@ -83,9 +83,9 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   const pickingRef = useRef(false)
 
   useEffect(() => {
-    notePanelMounted()
-    return () => notePanelUnmounted()
-  }, [])
+    notePanelMounted(tabKey)
+    return () => notePanelUnmounted(tabKey)
+  }, [tabKey])
 
   useEffect(() => {
     const off = subscribeEngine(() => setSnapshot(engineState()))
