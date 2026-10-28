@@ -75,6 +75,10 @@ if (missing.length > 0) {
   console.log('FRESH  сборка совпадает с исходниками (rev)')
 }
 console.log(`transport: ${String(health.body?.transport)} · stage: ${String(health.body?.stage)} · url: ${String(health.body?.url)}`)
+if (health.body?.revMatch === false) {
+  console.log(`FAIL  клиент прислал другой отпечаток сборки: ${String(health.body?.clientRev ?? 'нет')} ≠ ${expectedRev}`)
+  failed += 1
+}
 if (health.body?.transport !== true) {
   console.log('WARN  панель не подключена — откройте вкладку Startapus и повторите')
   failed += 1

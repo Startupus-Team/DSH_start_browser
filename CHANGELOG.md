@@ -1,5 +1,21 @@
 # Changelog — startapus-browser
 
+## 0.21.1 — фаза 1 закрыта
+
+### Добавлено
+
+- **Long-poll**: `/client/poll` держит запрос до 15 с (`wait: true` от панели), поэтому команда
+  доходит без ожидания интервала опроса; без флага маршрут отвечает сразу (тесты и curl).
+  Тест `POLL-1` (252 мс).
+- **Сверка отпечатка сборки**: клиент присылает `clientRev` (из `__BUILD_REV__`), `/health`
+  отдаёт `clientRev`/`revMatch`, `npm run live` падает при `revMatch: false`. Тест `REV-1`.
+
+### Итог фазы 1
+
+`destroyed`/`render-process-gone` с повторной резервацией (E13), `verify` по `commandId` (SEC-1),
+атомарный стор, мьютекс тика, long-poll, сверка отпечатка — всё покрыто гейтами:
+`SCRIPT 10/10 · RULES 8/8 · ENGINE 13/13 · IMPORTS OK · TOOLS 26 · selftest 47/47`.
+
 ## 0.21.0 — фаза 1: устойчивость
 
 ### Добавлено

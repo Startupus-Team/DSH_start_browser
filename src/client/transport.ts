@@ -64,7 +64,7 @@ export async function poll(base: string): Promise<BridgeCommand | null> {
     const response = await fetch(`${base}/startapus-browser/client/poll`, {
       method: 'POST',
       headers: { ...authHeaders(), 'content-type': 'application/json' },
-      body: JSON.stringify({ tabKey: currentTab }),
+      body: JSON.stringify({ tabKey: currentTab, wait: true }),
     })
     if (!response.ok) return null
     const body = (await response.json()) as { command?: BridgeCommand }

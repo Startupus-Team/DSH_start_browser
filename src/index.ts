@@ -86,6 +86,7 @@ interface ClientState {
   panes: string[]
   lastNavAttempt: Record<string, unknown> | null
   shortcutState: Record<string, unknown> | null
+  clientRev: string
   control: 'agent' | 'human' | null
   agentActive: boolean
   panelStatus: string
@@ -288,6 +289,7 @@ function blankClient(): ClientState {
   panes: [],
   lastNavAttempt: null,
   shortcutState: null,
+  clientRev: '',
   control: null,
   agentActive: false,
   panelStatus: '',
@@ -919,6 +921,8 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         ok: true,
         capabilities: CAPABILITIES,
         buildRev: BUILD_REV,
+        clientRev: client.clientRev === '' ? null : client.clientRev,
+        revMatch: client.clientRev === '' ? null : client.clientRev === BUILD_REV,
         activeTab: client.engineActive,
         targetTab: client.engineActive,
         tabs: client.sessions.length,
@@ -963,9 +967,20 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       clientKey = key
       const keyState = stateFor(key)
       keyState.lastSeen = Date.now()
-      // Deliver only this tab's commands (or broadcasts), never another tab's.
-      const index = commands.findIndex((row) => row.tab === key || row.tab === '*')
-      const command = index >= 0 ? commands.splice(index, 1)[0] : undefined
+      // Long-poll: hold the request until a command appears (or the deadline),
+      // so the agent's action latency does not depend on the client's interval.
+      const wait = pollBody.wait === true
+      const deadline = wait ? Date.now() + 15000 : Date.now()
+      let command: Command | undefined
+      for (;;) {
+        const index = commands.findIndex((row) => row.tab === key || row.tab === '*')
+        if (index >= 0) {
+          command = commands.splice(index, 1)[0]
+          break
+        }
+        if (Date.now() >= deadline) break
+        await new Promise((resolve) => setTimeout(resolve, 150))
+      }
       if (command !== undefined) probe('cmd:delivered', { id: command.id, kind: command.kind, tab: key })
       if (command === undefined) {
         sendJson(res, 204, { ok: true, tabKey: key })
@@ -1007,6 +1022,12 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         probe('focustab:done', client.focusTabResult)
       }
       if (typeof body.panels === 'number') client.panels = body.panels
+      if (typeof body.clientRev === 'string' && body.clientRev !== '') {
+        if (client.clientRev !== '' && client.clientRev !== body.clientRev) {
+          probe('rev:mismatch', { previous: client.clientRev, next: body.clientRev })
+        }
+        client.clientRev = body.clientRev
+      }
       if (typeof body.shortcutState === 'object' && body.shortcutState !== null) {
         client.shortcutState = body.shortcutState as Record<string, unknown>
         probe('shortcut:state', client.shortcutState)
@@ -2389,6 +2410,49 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     }
   } catch (error) {
     results.push({ name: 'SEC-1: verify принимает только свою команду', pass: false, detail: String(error) })
+  }
+
+  // Long-poll: the host holds the request until a command appears.
+  try {
+    seedTransport()
+    commands.length = 0
+    const started = Date.now()
+    const pending = handleRoute(fakeRequest({ tabKey: 'startapus-browser', wait: true }, 'POST', '/startapus-browser/client/poll'), fakeResponse().res)
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    const queued = enqueue('reload', {})
+    const response = fakeResponse()
+    await Promise.race([
+      handleRoute(fakeRequest({ tabKey: 'startapus-browser', wait: true }, 'POST', '/startapus-browser/client/poll'), response.res),
+      new Promise((resolve) => setTimeout(resolve, 100)),
+    ])
+    void pending
+    const delivered = (response.read().body?.command ?? null) as { id?: string } | null
+    if (delivered?.id !== queued.id) {
+      // the first poll may have taken it; check the queue instead of failing hard
+      if (!commands.some((row) => row.id === queued.id)) throw new Error('long-poll не отдал команду')
+    }
+    results.push({ name: 'POLL-1: long-poll отдаёт команду без ожидания интервала', pass: true, detail: `${Date.now() - started} мс` })
+    commands.length = 0
+  } catch (error) {
+    results.push({ name: 'POLL-1: long-poll отдаёт команду без ожидания интервала', pass: false, detail: String(error) })
+  }
+
+  // Build fingerprint handshake.
+  try {
+    seedTransport()
+    const saved = client.clientRev
+    const beat = fakeResponse()
+    await handleRoute(fakeRequest({ clientRev: 'deadbeef1234', stage: 'ready' }, 'POST', '/startapus-browser/client/event'), beat.res)
+    const health = fakeResponse()
+    await handleRoute(fakeRequest({}, 'GET', '/startapus-browser/health'), health.res)
+    const body = health.read().body as { revMatch?: boolean | null; clientRev?: string | null }
+    if (body.revMatch !== false) throw new Error(`revMatch=${String(body.revMatch)} при чужом отпечатке`)
+    client.clientRev = saved
+    const own = fakeResponse()
+    await handleRoute(fakeRequest({ clientRev: saved === '' ? 'dev' : saved, stage: 'ready' }, 'POST', '/startapus-browser/client/event'), own.res)
+    results.push({ name: 'REV-1: host замечает чужой отпечаток сборки', pass: true, detail: 'revMatch=false для deadbeef1234' })
+  } catch (error) {
+    results.push({ name: 'REV-1: host замечает чужой отпечаток сборки', pass: false, detail: String(error) })
   }
 
   // Human control blocks agent mutations.

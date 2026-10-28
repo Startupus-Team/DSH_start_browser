@@ -69,6 +69,9 @@ export interface EngineState {
   panels: number
 }
 
+// Injected by build.mjs; guarded so standalone tests of this module still load.
+const CLIENT_REV = typeof __BUILD_REV__ === 'string' ? __BUILD_REV__ : 'dev'
+
 const WORKSPACE_KEY = 'startapus-browser'
 /** Guests are expensive: keep the pool small and drop idle pages. */
 const MAX_SESSIONS = 6
@@ -1112,6 +1115,7 @@ export function startEngine(): void {
         panes: [...mountedPaneKeys],
         lastNavAttempt,
         shortcutState,
+        clientRev: CLIENT_REV,
         control: controlHolder,
         agentActive: Date.now() < agentActiveUntil,
       })
