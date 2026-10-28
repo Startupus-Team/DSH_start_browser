@@ -12,7 +12,7 @@
 
 import type { ElementPick } from './element-refs.ts'
 import { actScript, coverageScript, evidenceScript, measureScript, pageScanScript } from './verify-scripts'
-import { cropRect as clampCropRect, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
+import { cropRect as clampCropRect, normalizeAddress, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
 import { openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
 import { poll, probe, report, setTab } from './transport'
@@ -98,6 +98,8 @@ let closeRequested: () => boolean = () => false
 let pickRequested: () => void = () => undefined
 /** Opening a tab through the pane's own bound actions (falls back to the controller). */
 let openTabRequested: ((url: string) => boolean) | null = null
+/** Last address-bar attempt, reported so a silent failure becomes visible. */
+let lastNavAttempt: { url: string; ok: boolean; reason: string; hasGuest: boolean; hasLoadURL: boolean; at: number } | null = null
 const listeners = new Set<() => void>()
 /** Panes currently mounted, by tab key (double mounts do not inflate the count). */
 const mountedPaneKeys = new Set<string>()
@@ -160,6 +162,42 @@ function notify(): void {
 export function setStatus(next: string): void {
   status = next
   notify()
+}
+
+/**
+ * Navigate one session from the pane's address bar.
+ * Never silent: the outcome (and why) is stored for `health.lastNavAttempt`.
+ */
+export function openInSession(tabId: string, rawUrl: string): { ok: boolean; reason: string; url: string } {
+  const normalized = normalizeAddress(rawUrl)
+  if (!normalized.ok) {
+    lastNavAttempt = { url: rawUrl, ok: false, reason: normalized.reason, hasGuest: false, hasLoadURL: false, at: Date.now() }
+    notify()
+    return { ok: false, reason: normalized.reason, url: rawUrl }
+  }
+  const session = sessions.get(tabId)
+  const guest = session?.guest ?? activeGuest()
+  const hasLoadURL = typeof guest?.loadURL === 'function'
+  if (guest === null || guest === undefined || !hasLoadURL) {
+    const reason = guest === null || guest === undefined ? 'гость этой вкладки не создан' : 'у гостя нет loadURL'
+    lastNavAttempt = { url: normalized.url, ok: false, reason, hasGuest: guest !== null && guest !== undefined, hasLoadURL, at: Date.now() }
+    notify()
+    setStatus(`навигация не удалась: ${reason}`)
+    return { ok: false, reason, url: normalized.url }
+  }
+  try {
+    guest.loadURL(normalized.url)
+    lastNavAttempt = { url: normalized.url, ok: true, reason: '', hasGuest: true, hasLoadURL: true, at: Date.now() }
+    setStatus(`открываю ${normalized.url}`)
+    notify()
+    return { ok: true, reason: '', url: normalized.url }
+  } catch (error) {
+    const reason = String(error instanceof Error ? error.message : error)
+    lastNavAttempt = { url: normalized.url, ok: false, reason, hasGuest: true, hasLoadURL: true, at: Date.now() }
+    setStatus(`навигация не удалась: ${reason}`)
+    notify()
+    return { ok: false, reason, url: normalized.url }
+  }
 }
 
 /** The human takes the page back: agent mutations are refused from now on. */
@@ -1003,6 +1041,7 @@ export function startEngine(): void {
         activeTab: activeTabId,
         panels: mountedPaneKeys.size,
         panes: [...mountedPaneKeys],
+        lastNavAttempt,
         control: controlHolder,
         agentActive: Date.now() < agentActiveUntil,
       })

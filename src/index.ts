@@ -83,6 +83,7 @@ interface ClientState {
   engineActive: string | null
   panels: number | null
   panes: string[]
+  lastNavAttempt: Record<string, unknown> | null
   control: 'agent' | 'human' | null
   agentActive: boolean
   panelStatus: string
@@ -281,6 +282,7 @@ function blankClient(): ClientState {
   engineActive: null,
   panels: null,
   panes: [],
+  lastNavAttempt: null,
   control: null,
   agentActive: false,
   panelStatus: '',
@@ -916,6 +918,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         sessions: client.sessions,
         panels: client.panels,
         panes: client.panes,
+        lastNavAttempt: client.lastNavAttempt,
         control: client.control,
         agentActive: client.agentActive,
         engineActive: client.engineActive,
@@ -985,6 +988,9 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       }
       if (typeof body.activeTab === 'string' && body.activeTab !== '') client.engineActive = body.activeTab
       if (typeof body.panels === 'number') client.panels = body.panels
+      if (typeof body.lastNavAttempt === 'object' && body.lastNavAttempt !== null) {
+        client.lastNavAttempt = body.lastNavAttempt as Record<string, unknown>
+      }
       if (Array.isArray(body.panes)) client.panes = (body.panes as unknown[]).filter((row) => typeof row === 'string').slice(0, 32) as string[]
       if (body.control === 'agent' || body.control === 'human' || body.control === null) {
         client.control = body.control as 'agent' | 'human' | null

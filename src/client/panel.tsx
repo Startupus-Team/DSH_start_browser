@@ -26,6 +26,7 @@ import {
   engineState,
   guestOf,
   hideSession,
+  openInSession,
   releaseToAgent,
   takeHumanControl,
   notePanelMounted,
@@ -165,19 +166,9 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   }, [togglePick, props])
 
   const navigate = useCallback((next: string): void => {
-    const resolved = normalizeAddress(next)
-    if (!resolved.ok) {
-      setStatus(`адрес: ${resolved.reason}`)
-      return
-    }
-    const guest = guestOf(tabKey) ?? activeGuest()
-    if (guest === null) {
-      setStatus('навигация: гость этой вкладки ещё не готов')
-      return
-    }
-    guest.loadURL?.(resolved.url)
-    setStatus(`открываю ${resolved.url}`)
-  }, [])
+    const result = openInSession(tabKey, next)
+    if (!result.ok) setStatus(`адрес: ${result.reason}`)
+  }, [tabKey])
 
   const go = useCallback((direction: 'back' | 'forward' | 'reload'): void => {
     const guest = guestOf(tabKey) ?? activeGuest()
@@ -225,9 +216,10 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           value={address}
           placeholder="https://…"
           onChange={(event) => setDraft(event.target.value)}
-          onFocus={() => {
+          onFocus={(event) => {
             setDraft(snapshot.url)
             setEditing(true)
+            event.currentTarget.select()
           }}
           onBlur={() => setEditing(false)}
           onKeyDown={(event) => {
