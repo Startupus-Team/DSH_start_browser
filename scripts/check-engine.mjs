@@ -216,8 +216,22 @@ await check('E8: состояние движка отражает сессии',
   return `tabs=${state.tabs}, hasGuest=${state.hasGuest}`
 })
 
+await check('E9: мёртвая сессия не маскирует живую', async () => {
+  const live = engine.listSessions()[0]
+  expect(live !== undefined, 'нет живой сессии')
+  // Simulate a ghost session created later but without a guest.
+  const ghostHost = new FakeElement('div')
+  body.appendChild(ghostHost)
+  await engine.showSession('ghost', 'https://ghost.example/', ghostHost)
+  const ghostGuest = engine.guestOf('ghost')
+  expect(ghostGuest !== null, 'гость ghost не создан')
+  ghostGuest.parent.remove()
+  expect(engine.activeGuest() !== null, 'activeGuest вернул null при живой сессии')
+  return `activeGuest → ${engine.listSessions().find((row) => row.tabId === live.tabId)?.url ?? 'живая сессия'}`
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 8/8')
+console.log('ENGINE OK: 9/9')

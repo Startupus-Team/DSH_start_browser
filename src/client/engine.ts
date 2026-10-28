@@ -153,8 +153,16 @@ export function setStatus(next: string): void {
 
 /** Guest of the active tab, if any. */
 export function activeGuest(): GuestElement | null {
-  if (activeTabId === null) return null
-  return sessions.get(activeTabId)?.guest ?? null
+  const current = activeTabId === null ? undefined : sessions.get(activeTabId)
+  if (current?.guest !== undefined && current?.guest !== null) return current.guest
+  // A ghost session (dead guest, no DOM) must not hide a healthy one.
+  for (const session of sessions.values()) {
+    if (session.guest !== null) {
+      activeTabId = session.tabId
+      return session.guest
+    }
+  }
+  return null
 }
 
 /** Guest of one tab. */
@@ -359,7 +367,7 @@ export async function activateSession(tabId: string, initialUrl: string, host: H
 export async function showSession(tabId: string, initialUrl: string, host: HTMLElement | null): Promise<void> {
   activeTabId = tabId
   const known = sessions.get(tabId)
-  if (known !== undefined && !known.container.isConnected) {
+  if (known !== undefined && (known.guest === null || !known.container.isConnected)) {
     // The pane DOM was replaced (plugin reload, remount): the guest inside the
     // detached container is dead, so forget the zombie session and build a new one.
     sessions.delete(tabId)
@@ -439,6 +447,12 @@ export function disposeSession(tabId: string): boolean {
 function collectIdleSessions(): void {
   const now = Date.now()
   for (const session of [...sessions.values()]) {
+    // The pane DOM is gone (tab closed/remounted): the guest is dead and the
+    // session would only confuse activation and capture.
+    if (!session.container.isConnected) {
+      disposeSession(session.tabId)
+      continue
+    }
     if (session.tabId === activeTabId) continue
     if (now - session.lastActiveAt < SESSION_IDLE_MS) continue
     closeSession(session.tabId)
