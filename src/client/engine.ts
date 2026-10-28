@@ -11,8 +11,8 @@
  */
 
 import type { ElementPick } from './element-refs.ts'
-import { actScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript } from './verify-scripts'
-import { cropRect as clampCropRect, normalizeAddress, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
+import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript } from './verify-scripts'
+import { cropRect as clampCropRect, normalizeAddress, normalizeWait, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
 import { INSTANCE_ID, lastHostRev, note, poll, probe, report, setReportMeta, setTab } from './transport'
@@ -1495,6 +1495,57 @@ export function startEngine(): () => void {
               }, 250)
             } catch (error) {
               setStatus(`выделение области не установилось: ${String(error)}`)
+            }
+          }
+        } else if (command.kind === 'wait') {
+          const view = await readyView(command)
+          const parsedSpec = normalizeWait(command.args)
+          if (view === null || view.executeJavaScript === undefined) {
+            await report(base as string, { waitResult: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)', at: Date.now() } })
+          } else if (!parsedSpec.ok) {
+            await report(base as string, { waitResult: { met: false, invalid: true, message: parsedSpec.reason, at: Date.now() } })
+          } else {
+            const spec = parsedSpec.spec
+            const startedAt = Date.now()
+            let detail: Record<string, unknown> = {}
+            let outcome: Record<string, unknown> | null = null
+            while (outcome === null) {
+              try {
+                const raw = await withTimeout(view.executeJavaScript(waitScript(spec), false), 4000, 'E_TIMEOUT')
+                const parsed = typeof raw === 'string' ? JSON.parse(raw) as { status?: string; met?: boolean; detail?: Record<string, unknown>; message?: string } : {}
+                if (parsed.status === 'ERROR') {
+                  outcome = { met: false, invalid: true, message: String(parsed.message ?? 'ошибка условия'), waitedMs: Date.now() - startedAt }
+                } else {
+                  detail = parsed.detail ?? {}
+                  if (parsed.met === true) outcome = { met: true, timedOut: false, waitedMs: Date.now() - startedAt, detail }
+                }
+              } catch (error) {
+                detail = { error: String(error) }
+              }
+              if (outcome === null) {
+                if (Date.now() - startedAt >= spec.timeoutMs) outcome = { met: false, timedOut: true, waitedMs: Date.now() - startedAt, detail }
+                else await new Promise((resolve) => setTimeout(resolve, 200))
+              }
+            }
+            await report(base as string, { waitResult: { ...outcome, at: Date.now() } })
+            setStatus(outcome.met === true ? `условие выполнено за ${String(outcome.waitedMs)} мс` : `ожидание: условие не выполнено`)
+          }
+        } else if (command.kind === 'color_scheme') {
+          const view = await readyView(command)
+          const mode = command.args.mode === 'dark' || command.args.mode === 'light' ? command.args.mode : 'auto'
+          if (view === null || view.executeJavaScript === undefined) {
+            await report(base as string, { schemeResult: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)', at: Date.now() } })
+          } else {
+            try {
+              const raw = await withTimeout(view.executeJavaScript(colorSchemeScript(mode), false), 5000, 'E_TIMEOUT')
+              const parsed = typeof raw === 'string' ? JSON.parse(raw) as Record<string, unknown> : {}
+              if (parsed.status === 'ERROR') await report(base as string, { schemeResult: { error: String(parsed.message ?? 'ошибка'), at: Date.now() } })
+              else {
+                await report(base as string, { schemeResult: { ...parsed, at: Date.now() } })
+                setStatus(`тема страницы: ${mode}`)
+              }
+            } catch (error) {
+              await report(base as string, { schemeResult: { error: String(error), at: Date.now() } })
             }
           }
         } else if (command.kind === 'viewport') {

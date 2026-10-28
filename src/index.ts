@@ -21,6 +21,7 @@ import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renam
 import { homedir, tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
+import { COLOR_SCHEMES, normalizeWait } from './client/rules'
 
 /** Append one diagnostic line; host registration must be observable without DevTools. */
 function probe(event: string, data: Record<string, unknown> = {}): void {
@@ -92,6 +93,8 @@ interface ClientState {
   measure: Record<string, unknown> | null
   network: Record<string, unknown> | null
   inspect: Record<string, unknown> | null
+  waitResult: Record<string, unknown> | null
+  schemeResult: Record<string, unknown> | null
   clientRev: string
   panelMounts: number
   lastLoadError: Record<string, unknown> | null
@@ -202,6 +205,7 @@ const CAPABILITIES = [
 ]
 
 const MAX_BODY = 512 * 1024
+// Long-poll holds up to 15 s, so a healthy panel can be silent between reports.
 const CLIENT_TTL_MS = 15_000
 const TASK_LIMIT = 200
 /** Consecutive failed verifications after which the task stops retrying. */
@@ -231,6 +235,7 @@ const TOOL_LIMITS: Record<string, number> = {
   ui_network: 20,
   ui_inspect: 30,
   ui_measure: 30,
+  ui_wait: 30,
 }
 
 /** Read a text file, or throw with context. */
@@ -318,6 +323,8 @@ function blankClient(): ClientState {
   measure: null,
   network: null,
   inspect: null,
+  waitResult: null,
+  schemeResult: null,
   clientRev: '',
   panelMounts: 0,
   lastLoadError: null,
@@ -1134,7 +1141,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           probe('client:instance', { instanceId: body.instanceId, attached: body.attached === true, known: clientInstances.size })
         }
       }
-      for (const field of ['pageText', 'network', 'inspect', 'measure'] as const) {
+      for (const field of ['pageText', 'network', 'inspect', 'measure', 'waitResult', 'schemeResult'] as const) {
         const value = (body as Record<string, unknown>)[field]
         if (typeof value === 'object' && value !== null) {
           ;(client as unknown as Record<string, unknown>)[field] = value
@@ -1625,7 +1632,7 @@ function untrusted<T>(data: T, source = 'page'): { trust: { untrusted: true; sou
 }
 
 /** Wait until the renderer reports a fresh value for a page field. */
-async function waitForField(field: 'pageText' | 'network' | 'inspect', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
+async function waitForField(field: 'pageText' | 'network' | 'inspect' | 'waitResult' | 'schemeResult', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
   for (let waited = 0; waited < timeoutMs; waited += 100) {
     const value = client[field]
     if (value !== null && typeof value.at === 'number' && value.at >= since) {
@@ -1635,6 +1642,22 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   throw new Error(`E_TIMEOUT: ${field} не пришёл за ${timeoutMs / 1000} с`)
+}
+
+/** Queue a colour-scheme change and wait for the renderer's report. */
+async function applyColorScheme(mode: string, tabId: string): Promise<Record<string, unknown>> {
+  requireTransport()
+  const since = Date.now()
+  const command = enqueue('color_scheme', { ...(tabId === '' ? {} : { tabId }), mode })
+  const result = await waitForField('schemeResult', since, 6000)
+  return untrusted({
+    mode: result.mode ?? mode,
+    patchedRules: result.patchedRules ?? 0,
+    skippedSheets: result.skippedSheets ?? 0,
+    approximate: true,
+    hint: 'эмуляция приблизительная: стили чужих доменов без CORS пропущены; после перезагрузки вызовите снова; auto — сброс',
+    commandId: command.id,
+  }, 'color_scheme')
 }
 
 /** Every tool must declare `output { schema, render }` or the registry rejects it. */
@@ -1948,9 +1971,19 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         zoom: { type: 'number', description: 'Масштаб 0.5–2; без значения — только чтение' },
         width: { type: 'number', description: 'Целевая ширина вьюпорта в CSS px (240–2400) — подбирается масштабом' },
         preset: { type: 'string', enum: ['mobile', 'tablet', 'desktop'], description: 'Пресет ширины: mobile 390, tablet 768, desktop 1280 (сброс к 1x)' },
+        colorScheme: { type: 'string', enum: ['dark', 'light', 'auto'], description: 'Эмуляция prefers-color-scheme для текущей страницы: dark | light | auto (сброс). Приблизительная, без CDP: переписывает media-запросы доступных стилей и matchMedia; после перезагрузки страницы вызовите снова' },
+        tabId: tabIdParam,
       }, []),
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
+        if (args.colorScheme !== undefined) {
+          const scheme = String(args.colorScheme)
+          if (!(COLOR_SCHEMES as readonly string[]).includes(scheme)) throw new Error('E_NO_EFFECT: colorScheme должен быть dark, light или auto')
+          if (args.zoom !== undefined || args.width !== undefined || args.preset !== undefined) {
+            throw new Error('E_NO_EFFECT: colorScheme нельзя сочетать с zoom, width и preset — вызовите отдельно')
+          }
+          return applyColorScheme(scheme, String(args.tabId ?? ''))
+        }
         const zoom = typeof args.zoom === 'number' ? args.zoom : null
         const preset = typeof args.preset === 'string' ? args.preset : null
         const presetWidths: Record<string, number> = { mobile: 390, tablet: 768, desktop: 1280 }
@@ -2075,6 +2108,37 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         const command = enqueue('network', { ...(tabId === '' ? {} : { tabId }), limit })
         const result = await waitForField('network', since)
         return untrusted({ total: result.total ?? 0, slow: result.slow ?? 0, heavy: result.heavy ?? 0, entries: result.entries ?? [], commandId: command.id }, 'network')
+      },
+    },
+    {
+      name: 'ui_wait',
+      description: 'Дождаться условия на странице вместо пауз: появился/исчез селектор (state), на странице есть текст, сеть затихла (networkIdle). Все заданные условия должны выполниться разом. Возвращает met, waitedMs и поусловный detail. Пока идёт ожидание (до 30 с), остальные команды панели ждут.',
+      parameters: objectSchema({
+        selector: { type: 'string', description: 'CSS-селектор элемента' },
+        state: { type: 'string', enum: ['visible', 'hidden', 'present', 'absent'], description: 'Состояние селектора (по умолчанию visible); только вместе с selector' },
+        text: { type: 'string', description: 'Подстрока в тексте страницы (без учёта регистра)' },
+        networkIdle: { type: 'boolean', description: 'Ждать, пока страница загружена и новых запросов нет idleMs' },
+        idleMs: { type: 'number', description: 'Тишина в сети, 100–5000 мс (по умолчанию 500)' },
+        timeoutMs: { type: 'number', description: 'Сколько ждать, 500–30000 мс (по умолчанию 10000)' },
+        tabId: tabIdParam,
+      }, []),
+      output: output(asText),
+      execute: async (args: Record<string, unknown>) => {
+        const parsed = normalizeWait(args)
+        if (!parsed.ok) throw new Error(`E_NO_EFFECT: ${parsed.reason}`)
+        requireTransport()
+        const tabId = String(args.tabId ?? '')
+        const since = Date.now()
+        const command = enqueue('wait', { ...(tabId === '' ? {} : { tabId }), ...parsed.spec })
+        const result = await waitForField('waitResult', since, parsed.spec.timeoutMs + 5000)
+        if (result.invalid === true) throw new Error(`E_NO_EFFECT: условие не разобрано — ${String(result.message ?? '')}`)
+        return untrusted({
+          met: result.met === true,
+          timedOut: result.timedOut === true,
+          waitedMs: result.waitedMs ?? 0,
+          detail: result.detail ?? {},
+          commandId: command.id,
+        }, 'wait')
       },
     },
     {
@@ -2837,6 +2901,74 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
   } catch (error) {
     commands.length = 0
     results.push({ name: 'P2-2: inspect и page_text возвращают результат', pass: false, detail: String(error) })
+  }
+
+  // ui_wait and colour-scheme emulation round-trip through the renderer.
+  try {
+    seedTransport()
+    commands.length = 0
+    const send = async (body: Record<string, unknown>): Promise<void> => {
+      await handleRoute(fakeRequest(body, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    }
+    const rejects = async (prefix: string, run: () => unknown): Promise<void> => {
+      try {
+        await run()
+      } catch (error) {
+        if (String(error instanceof Error ? error.message : error).startsWith(prefix)) return
+        throw error
+      }
+      throw new Error(`ожидалась ошибка ${prefix}`)
+    }
+    await rejects('E_NO_EFFECT', () => call('ui_wait', {}))
+    await rejects('E_NO_EFFECT', () => call('ui_wait', { state: 'hidden' }))
+    if (commands.length !== 0) throw new Error('невалидный ui_wait поставил команду')
+
+    const waiting = call('ui_wait', { selector: '#toast', state: 'visible', text: 'Готово', timeoutMs: 2000, tabId: 'tab-w' }) as Promise<Record<string, unknown>>
+    const waitCommand = commands[commands.length - 1]
+    if (waitCommand?.kind !== 'wait' || waitCommand.args.selector !== '#toast' || waitCommand.args.text !== 'Готово'
+      || waitCommand.args.timeoutMs !== 2000 || waitCommand.args.tabId !== 'tab-w') {
+      throw new Error(`wait не поставлен: ${JSON.stringify(waitCommand)}`)
+    }
+    await send({ waitResult: { met: true, timedOut: false, waitedMs: 640, detail: { selector: true, text: true }, at: Date.now() } })
+    const met = unwrap<{ met?: boolean; waitedMs?: number; detail?: Record<string, boolean> }>(await waiting)
+    if (met.met !== true || met.waitedMs !== 640 || met.detail?.text !== true) throw new Error(`wait вернул ${JSON.stringify(met)}`)
+    commands.length = 0
+
+    const timing = call('ui_wait', { networkIdle: true, timeoutMs: 500 }) as Promise<Record<string, unknown>>
+    await send({ waitResult: { met: false, timedOut: true, waitedMs: 500, detail: { networkIdle: false }, at: Date.now() } })
+    const late = unwrap<{ met?: boolean; timedOut?: boolean }>(await timing)
+    if (late.met !== false || late.timedOut !== true) throw new Error(`таймаут вернул ${JSON.stringify(late)}`)
+    commands.length = 0
+
+    const broken = call('ui_wait', { selector: '!!' }) as Promise<unknown>
+    await send({ waitResult: { met: false, invalid: true, message: 'bad selector', at: Date.now() } })
+    let brokenMessage = ''
+    try {
+      await broken
+    } catch (error) {
+      brokenMessage = String(error instanceof Error ? error.message : error)
+    }
+    if (!brokenMessage.includes('E_NO_EFFECT') || !brokenMessage.includes('bad selector')) throw new Error(`битый селектор: ${brokenMessage}`)
+    commands.length = 0
+
+    await rejects('E_NO_EFFECT', () => call('ui_viewport', { colorScheme: 'sepia' }))
+    await rejects('E_NO_EFFECT', () => call('ui_viewport', { colorScheme: 'dark', zoom: 1.5 }))
+    if (commands.length !== 0) throw new Error('невалидная тема поставила команду')
+    const scheming = call('ui_viewport', { colorScheme: 'dark' }) as Promise<Record<string, unknown>>
+    const schemeCommand = commands[commands.length - 1]
+    if (schemeCommand?.kind !== 'color_scheme' || schemeCommand.args.mode !== 'dark') {
+      throw new Error(`color_scheme не поставлен: ${JSON.stringify(schemeCommand)}`)
+    }
+    await send({ schemeResult: { status: 'OK', mode: 'dark', patchedRules: 7, skippedSheets: 2, at: Date.now() } })
+    const scheme = unwrap<{ mode?: string; patchedRules?: number; skippedSheets?: number; approximate?: boolean }>(await scheming)
+    if (scheme.mode !== 'dark' || scheme.patchedRules !== 7 || scheme.skippedSheets !== 2 || scheme.approximate !== true) {
+      throw new Error(`тема вернула ${JSON.stringify(scheme)}`)
+    }
+    commands.length = 0
+    results.push({ name: 'P3-1: ui_wait и эмуляция темы', pass: true, detail: 'wait: met/timeout/битый селектор; тема: dark → 7 правил, 2 пропущено' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P3-1: ui_wait и эмуляция темы', pass: false, detail: String(error) })
   }
 
   // Phase 2: typed failures carry a hint the agent can act on.

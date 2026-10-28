@@ -71,3 +71,50 @@ export function cropRect(
   const sh = Math.max(1, Math.min(image.height - sy, Math.round(rect.height * scale)))
   return { sx, sy, sw, sh }
 }
+
+/** Normalised `ui_wait` request. */
+export interface WaitSpec {
+  selector: string
+  state: 'visible' | 'hidden' | 'present' | 'absent'
+  text: string
+  networkIdle: boolean
+  idleMs: number
+  timeoutMs: number
+}
+
+export type WaitSpecResult = { ok: true; spec: WaitSpec } | { ok: false; reason: string }
+
+export const WAIT_STATES = ['visible', 'hidden', 'present', 'absent'] as const
+export const WAIT_MAX_MS = 30_000
+
+/** Validate and clamp `ui_wait` arguments; at least one condition is required. */
+export function normalizeWait(args: Record<string, unknown>): WaitSpecResult {
+  const selector = typeof args.selector === 'string' ? args.selector.trim() : ''
+  const text = typeof args.text === 'string' ? args.text.trim() : ''
+  const networkIdle = args.networkIdle === true
+  if (selector === '' && text === '' && !networkIdle) {
+    return { ok: false, reason: 'нужно хотя бы одно условие: selector, text или networkIdle' }
+  }
+  const rawState = typeof args.state === 'string' ? args.state : 'visible'
+  if (!(WAIT_STATES as readonly string[]).includes(rawState)) {
+    return { ok: false, reason: `state должен быть ${WAIT_STATES.join(' | ')}` }
+  }
+  if (selector === '' && typeof args.state === 'string') {
+    return { ok: false, reason: 'state имеет смысл только вместе с selector' }
+  }
+  const timeout = typeof args.timeoutMs === 'number' && Number.isFinite(args.timeoutMs) ? args.timeoutMs : 10_000
+  const idle = typeof args.idleMs === 'number' && Number.isFinite(args.idleMs) ? args.idleMs : 500
+  return {
+    ok: true,
+    spec: {
+      selector,
+      state: rawState as WaitSpec['state'],
+      text,
+      networkIdle,
+      idleMs: Math.min(5000, Math.max(100, Math.round(idle))),
+      timeoutMs: Math.min(WAIT_MAX_MS, Math.max(500, Math.round(timeout))),
+    },
+  }
+}
+
+export const COLOR_SCHEMES = ['dark', 'light', 'auto'] as const

@@ -374,3 +374,100 @@ export function inspectScript(selector: string, styles: readonly string[]): stri
     }
   })()`
 }
+
+/**
+ * One poll of a `ui_wait` condition: every requested condition must hold.
+ * Returns `{ met, detail }`; an invalid selector reports `status: 'ERROR'`.
+ */
+export function waitScript(spec: { selector: string; state: string; text: string; networkIdle: boolean; idleMs: number }): string {
+  return `(() => {
+    try {
+      const spec = ${JSON.stringify(spec)};
+      const detail = {};
+      let met = true;
+      if (spec.selector !== '') {
+        const el = document.querySelector(spec.selector);
+        let visible = false;
+        if (el) {
+          const rect = el.getBoundingClientRect();
+          const style = getComputedStyle(el);
+          visible = rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+        }
+        let ok;
+        if (spec.state === 'absent') ok = !el;
+        else if (spec.state === 'present') ok = !!el;
+        else if (spec.state === 'hidden') ok = !el || !visible;
+        else ok = visible;
+        detail.selector = ok;
+        met = met && ok;
+      }
+      if (spec.text !== '') {
+        const body = document.body && document.body.innerText ? document.body.innerText : '';
+        const ok = body.toLowerCase().indexOf(spec.text.toLowerCase()) !== -1;
+        detail.text = ok;
+        met = met && ok;
+      }
+      if (spec.networkIdle) {
+        let lastEnd = 0;
+        for (const entry of performance.getEntriesByType('resource')) lastEnd = Math.max(lastEnd, entry.responseEnd || 0);
+        const ok = document.readyState === 'complete' && performance.now() - lastEnd >= spec.idleMs;
+        detail.networkIdle = ok;
+        met = met && ok;
+      }
+      return JSON.stringify({ status: 'OK', met, detail });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
+
+/**
+ * Approximate \`prefers-color-scheme\` emulation without CDP: media queries in
+ * reachable stylesheets (and \`matchMedia\`) are rewritten to match the requested
+ * scheme, \`color-scheme\` is set on the root, and everything is restorable.
+ * Cross-origin stylesheets that block \`cssRules\` are counted as skipped.
+ */
+export function colorSchemeScript(mode: 'dark' | 'light' | 'auto'): string {
+  return `(() => {
+    try {
+      const MODE = ${JSON.stringify(mode)};
+      const w = window;
+      const store = w.__startapusScheme || (w.__startapusScheme = { rules: [], attrs: [], matchMedia: null, hadRoot: false, prevRoot: '' });
+      for (const item of store.rules) { try { item.rule.media.mediaText = item.orig; } catch (e) {} }
+      for (const item of store.attrs) { try { if (item.orig === null) item.el.removeAttribute('media'); else item.el.setAttribute('media', item.orig); } catch (e) {} }
+      store.rules = []; store.attrs = [];
+      if (store.matchMedia) { w.matchMedia = store.matchMedia; store.matchMedia = null; }
+      if (store.hadRoot) { document.documentElement.style.colorScheme = store.prevRoot; store.hadRoot = false; }
+      if (MODE === 'auto') return JSON.stringify({ status: 'OK', mode: MODE, patchedRules: 0, skippedSheets: 0 });
+      const FEATURE = /\\(\\s*prefers-color-scheme\\s*:\\s*(dark|light)\\s*\\)/ig;
+      const rewrite = (text) => String(text).replace(FEATURE, (all, v) => v.toLowerCase() === MODE ? '(min-width: 0px)' : '(max-width: -1px)');
+      let patched = 0, skipped = 0;
+      const walk = (rules) => {
+        for (const rule of Array.from(rules)) {
+          if (rule.media && typeof rule.media.mediaText === 'string' && /prefers-color-scheme/i.test(rule.media.mediaText)) {
+            const orig = rule.media.mediaText;
+            const next = rewrite(orig);
+            if (next !== orig) { try { rule.media.mediaText = next; store.rules.push({ rule, orig }); patched += 1; } catch (e) {} }
+          }
+          if (rule.styleSheet) { try { walk(rule.styleSheet.cssRules); } catch (e) { skipped += 1; } }
+          if (rule.cssRules) walk(rule.cssRules);
+        }
+      };
+      const sheets = Array.from(document.styleSheets).concat(Array.from(document.adoptedStyleSheets || []));
+      for (const sheet of sheets) { try { walk(sheet.cssRules); } catch (e) { skipped += 1; } }
+      for (const el of Array.from(document.querySelectorAll('link[media], style[media]'))) {
+        const orig = el.getAttribute('media');
+        if (orig && /prefers-color-scheme/i.test(orig)) { el.setAttribute('media', rewrite(orig)); store.attrs.push({ el, orig }); patched += 1; }
+      }
+      store.matchMedia = w.matchMedia;
+      const original = w.matchMedia.bind(w);
+      w.matchMedia = function (query) { return original(rewrite(query)); };
+      store.hadRoot = true;
+      store.prevRoot = document.documentElement.style.colorScheme || '';
+      document.documentElement.style.colorScheme = MODE;
+      return JSON.stringify({ status: 'OK', mode: MODE, patchedRules: patched, skippedSheets: skipped });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}
