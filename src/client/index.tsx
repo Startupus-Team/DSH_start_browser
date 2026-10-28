@@ -219,66 +219,27 @@ export function apply(ctx: ClientContext): void {
   try {
     // Activate a mounted Startapus tab by clicking its chip in the kernel tab strip.
     setActivateFallback(() => {
+      // Only real tabs: never click links, cards or anything else in the app UI —
+      // a stray anchor opened the user's default browser once. Tab chips are the
+      // single safe target, and they live inside the sidebar's shadow roots.
       try {
-        // Kernel chrome lives in shadow roots, so a plain querySelectorAll misses
-        // the tab chips entirely. Walk every element and every shadow root.
-        const all: HTMLElement[] = []
+        const chips: HTMLElement[] = []
         const walk = (root: Document | ShadowRoot | HTMLElement): void => {
-          const nodes = root.querySelectorAll<HTMLElement>('*')
-          for (const node of Array.from(nodes)) {
-            all.push(node)
+          for (const node of Array.from(root.querySelectorAll<HTMLElement>('*'))) {
+            if (node.getAttribute('role') === 'tab' || node.getAttribute('aria-selected') !== null) chips.push(node)
             if (node.shadowRoot !== null) walk(node.shadowRoot)
           }
         }
         walk(document)
-        for (const node of all) {
-          const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim()
-          const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${text}`
+        for (const node of chips) {
+          const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${node.textContent ?? ''}`
           if (!/Стартапус|Startapus/i.test(label)) continue
-          if (node.closest('.dsh-startapus-browser') !== null) continue
           if (node.getAttribute('aria-selected') === 'false') continue
-          // The document element also contains the word: require a chip-shaped node.
-          const chipLike = node.getAttribute('aria-selected') !== null || ((node.tagName === 'BUTTON' || node.tagName === 'A') && text.length < 80)
-          if (!chipLike) continue
           node.click()
-          void note('tab:activated', { label: label.slice(0, 60), tag: node.tagName.toLowerCase() })
+          void note('tab:activated', { label: label.slice(0, 60) })
           return true
         }
-        // No chip found: the kernel only activates panes it creates itself, so press
-        // its own "+" control and then our guide card — the same two gestures a
-        // person makes. Both run in the app's document, not in the page.
-        const clickPlus = (): boolean => {
-          for (const node of all) {
-            const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${(node.textContent ?? '').trim().slice(0, 24)}`
-            if (/добавить вкладку|add tab|new tab|новая вкладка|open a new tab/i.test(label)) {
-              node.click()
-              void note('tab:plus', { label: label.slice(0, 60) })
-              return true
-            }
-            if (node.tagName === 'BUTTON' && (node.textContent ?? '').trim() === '+') {
-              node.click()
-              void note('tab:plus', { label: 'plus-button' })
-              return true
-            }
-          }
-          return false
-        }
-        if (clickPlus()) {
-          window.setTimeout(() => {
-            for (const node of all) {
-              const label = `${node.getAttribute('aria-label') ?? ''} ${node.title ?? ''} ${node.textContent ?? ''}`
-              if (!/Startapus Browser/i.test(label)) continue
-              if (node.closest('.dsh-startapus-browser') !== null) continue
-              const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim()
-              if (text.length > 160) continue
-              node.click()
-              void note('tab:guide', { label: label.slice(0, 60) })
-              return
-            }
-          }, 400)
-          return true
-        }
-        void note('dom:tabs', { scanned: all.length, chips: all.filter((node) => /Стартапус|Startapus/i.test(node.textContent ?? '')).length })
+        void note('dom:tabs', { scanned: chips.length })
         return false
       } catch (error) {
         void note('dom:tabs:error', { error: String(error) })
