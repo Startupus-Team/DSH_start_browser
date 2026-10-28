@@ -62,7 +62,7 @@ export const LAB_HTML = `<!doctype html>
   <section><h2>Стили, a11y, навигация</h2>
     <div id="styled-card"><span>Стилизованная карточка</span></div>
     <img id="a11y-img" alt="Логотип лаборатории" width="1" height="1" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">
-    <a id="go-other" href="other">Другая страница лаборатории</a>
+    <a id="go-other" href="lab/other">Другая страница лаборатории</a>
   </section>
 
   <section><h2>Автотесты страницы</h2>
@@ -149,7 +149,7 @@ export const LAB_HTML = `<!doctype html>
     add('console', true, 'info/warn/error записаны');
     add('title', document.title.indexOf('Startapus Lab') === 0);
     add('a11y', document.getElementById('a11y-img').getAttribute('alt') === 'Логотип лаборатории');
-    add('navigation link', document.getElementById('go-other').getAttribute('href') === 'other');
+    add('navigation link', (document.getElementById('go-other').getAttribute('href') || '').indexOf('other') >= 0);
     var pass = results.filter(function (r) { return r.ok; }).length;
     var body = document.getElementById('results').querySelector('tbody');
     body.innerHTML = '';
@@ -172,7 +172,7 @@ export const LAB_HTML = `<!doctype html>
 export const LAB_OTHER_HTML = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Startapus Lab — другая страница</title>
 <style>body{font:14px/1.6 system-ui,sans-serif;padding:24px;background:#0f1115;color:#e7e9ee}</style></head>
 <body><h1>Другая страница лаборатории</h1><p>Для проверки навигации и истории.</p>
-<p><a id="go-back" href="lab">Вернуться в лабораторию</a></p></body></html>`
+<p><a id="go-back" href="../lab">Вернуться в лабораторию</a></p></body></html>`
 
 /** Network fixture. */
 export const LAB_DATA = '{"ok":true,"items":[1,2,3],"note":"lab"}'
