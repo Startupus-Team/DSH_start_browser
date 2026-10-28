@@ -1078,7 +1078,9 @@ async function capturePageDataUrl(
 ): Promise<{ dataUrl: string; source: string }> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const image = await guest.capturePage?.(rect)
+      // capturePage never resolves for a hidden guest: bound it so the command fails
+      // fast instead of hanging the tool and the screenshot queue.
+      const image = await withTimeout(Promise.resolve(guest.capturePage?.(rect)), 5000, 'E_CAPTURE_TIMEOUT')
       const dataUrl = image?.toDataURL?.()
       if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image/')) {
         const size = image?.getSize?.()
@@ -1097,7 +1099,7 @@ async function capturePageDataUrl(
       // fall through to the full-screen fallback
     }
   }
-  const full = await guest.capturePage?.(undefined)
+  const full = await withTimeout(Promise.resolve(guest.capturePage?.(undefined)), 6000, 'E_CAPTURE_TIMEOUT')
   const fullUrl = full?.toDataURL?.()
   if (typeof fullUrl !== 'string' || !fullUrl.startsWith('data:image/')) {
     throw new Error('E_CAPTURE_EMPTY')
