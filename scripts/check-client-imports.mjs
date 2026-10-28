@@ -17,6 +17,7 @@ function exportsOf(path) {
   const names = new Set()
   for (const match of source.matchAll(/export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)/g)) names.add(match[1])
   for (const match of source.matchAll(/export\s+const\s+([A-Za-z0-9_]+)/g)) names.add(match[1])
+  for (const match of source.matchAll(/export\s+(?:let|var)\s+([A-Za-z0-9_]+)/g)) names.add(match[1])
   for (const match of source.matchAll(/export\s+(?:type|interface)\s+([A-Za-z0-9_]+)/g)) names.add(match[1])
   return names
 }
