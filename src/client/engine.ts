@@ -140,15 +140,16 @@ function hostVisible(host: HTMLElement | null): boolean {
   // A visible panel can still live inside a collapsed (0x0) tab body: the kernel
   // only attaches guests to panes that are actually on screen, so walk the chain.
   let node: HTMLElement | null = host
-  for (let depth = 0; node !== null && depth < 8; depth += 1) {
+  for (let depth = 0; node !== null && depth < 12; depth += 1) {
     if (typeof node.getBoundingClientRect !== 'function') return true
+    const style = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(node) : null
+    if (style !== null && (style.display === 'none' || style.visibility === 'hidden')) return false
+    // `display: contents` has no box of its own, so a 0x0 rect is expected there
+    // and must not be read as "the pane is collapsed".
+    const transparent = style !== null && style.display === 'contents'
     const rect = node.getBoundingClientRect()
     if (rect === undefined) return true
-    if (rect.width <= 1 || rect.height <= 1) return false
-    if (typeof window.getComputedStyle === 'function') {
-      const style = window.getComputedStyle(node)
-      if (style.display === 'none' || style.visibility === 'hidden') return false
-    }
+    if (!transparent && (rect.width <= 1 || rect.height <= 1)) return false
     node = (node.parentElement ?? null) as HTMLElement | null
   }
   return true
