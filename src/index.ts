@@ -89,6 +89,7 @@ interface ClientState {
   lastNavAttempt: Record<string, unknown> | null
   shortcutState: Record<string, unknown> | null
   pageText: Record<string, unknown> | null
+  measure: Record<string, unknown> | null
   network: Record<string, unknown> | null
   inspect: Record<string, unknown> | null
   clientRev: string
@@ -227,6 +228,7 @@ const TOOL_LIMITS: Record<string, number> = {
   ui_page_text: 20,
   ui_network: 20,
   ui_inspect: 30,
+  ui_measure: 30,
 }
 
 /** Read a text file, or throw with context. */
@@ -311,6 +313,7 @@ function blankClient(): ClientState {
   lastNavAttempt: null,
   shortcutState: null,
   pageText: null,
+  measure: null,
   network: null,
   inspect: null,
   clientRev: '',
@@ -955,6 +958,21 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       return
     }
 
+    if (path.endsWith('/tasks')) {
+      const rows = [...tasks.values()].slice(-100).map((task) => ({
+        id: task.id,
+        problem: task.problem.slice(0, 160),
+        state: task.state,
+        attempts: task.attempts,
+        updatedAt: task.updatedAt,
+        method: task.acceptance?.method ?? null,
+        property: task.acceptance?.property ?? null,
+        expected: task.acceptance?.expected ?? null,
+      }))
+      sendJson(res, 200, { ok: true, count: rows.length, tasks: rows })
+      return
+    }
+
     if (path.endsWith('/health')) {
       sendJson(res, 200, {
         ok: true,
@@ -975,6 +993,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         lastNavAttempt: client.lastNavAttempt,
         shortcutState: client.shortcutState,
         pageText: client.pageText,
+        measure: client.measure,
         network: client.network,
         inspect: client.inspect,
         control: client.control,
@@ -1070,7 +1089,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       if (notePayload !== undefined && typeof notePayload.name === 'string') {
         probe(notePayload.name, notePayload.data ?? {})
       }
-      for (const field of ['pageText', 'network', 'inspect'] as const) {
+      for (const field of ['pageText', 'network', 'inspect', 'measure'] as const) {
         const value = (body as Record<string, unknown>)[field]
         if (typeof value === 'object' && value !== null) {
           ;(client as unknown as Record<string, unknown>)[field] = value
@@ -2014,6 +2033,27 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
       },
     },
     {
+      name: 'ui_measure',
+      description: 'Измерить несколько CSS-свойств одного элемента за один вызов (D3): возвращает карту property → значение без создания задачи.',
+      parameters: objectSchema({
+        selector: { type: 'string', description: 'CSS-селектор элемента' },
+        properties: { type: 'array', description: 'Свойства для замера, до 8', items: { type: 'string' } },
+        tabId: tabIdParam,
+      }, ['selector', 'properties']),
+      output: output(asText),
+      execute: async (args: Record<string, unknown>) => {
+        requireTransport()
+        const selector = String(args.selector ?? '').trim()
+        const properties = Array.isArray(args.properties) ? args.properties.map(String).slice(0, 8) : []
+        if (selector === '' || properties.length === 0) throw new Error('E_NO_EFFECT: нужны selector и properties')
+        const tabId = String(args.tabId ?? '')
+        const since = Date.now()
+        const command = enqueue('measure', { ...(tabId === '' ? {} : { tabId }), selector, properties })
+        const result = await waitForField('measure', since)
+        return untrusted({ selector, values: result.values ?? {}, commandId: command.id }, 'measure')
+      },
+    },
+    {
       name: 'ui_inspect',
       description: 'Точечный замер элемента: указанные CSS-свойства, bounding box и окружение. Заменяет полный evidence, когда нужно проверить конкретные стили.',
       parameters: objectSchema({
@@ -2838,6 +2878,41 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'D4: экспорт задач в zip', pass: true, detail: `${bundle.tasks ?? 0} задач, ${bundle.bytes} байт` })
   } catch (error) {
     results.push({ name: 'D4: экспорт задач в zip', pass: false, detail: String(error) })
+  }
+
+  // Phase D: several properties measured in one round-trip.
+  try {
+    seedTransport()
+    const pending = call('ui_measure', { selector: 'header', properties: ['height', 'color'] }) as Promise<unknown>
+    const command = commands[commands.length - 1]
+    if (command?.kind !== 'measure' || !Array.isArray(command.args.properties)) {
+      throw new Error(`measure не поставлен: ${JSON.stringify(command?.args)}`)
+    }
+    const reply = fakeResponse()
+    await handleRoute(fakeRequest({
+      measure: { selector: 'header', values: { height: '57px', color: 'rgb(1,2,3)' }, at: Date.now() },
+    }, 'POST', '/startapus-browser/client/event'), reply.res)
+    const result = unwrap<{ values?: Record<string, string> }>(await pending)
+    if (result.values?.height !== '57px' || result.values?.color !== 'rgb(1,2,3)') {
+      throw new Error(`ui_measure вернул ${JSON.stringify(result)}`)
+    }
+    commands.length = 0
+    results.push({ name: 'D3: несколько свойств за один вызов', pass: true, detail: 'height+color из одного measure' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'D3: несколько свойств за один вызов', pass: false, detail: String(error) })
+  }
+
+  // Phase D: the queue is readable for the pane's task screen.
+  try {
+    seedTransport()
+    const response = fakeResponse()
+    await handleRoute(fakeRequest({}, 'GET', '/startapus-browser/tasks'), response.res)
+    const body = response.read().body as { count?: number; tasks?: unknown[] }
+    if (typeof body.count !== 'number' || !Array.isArray(body.tasks)) throw new Error(`/tasks вернул ${JSON.stringify(body)}`)
+    results.push({ name: 'D2: очередь задач доступна панели', pass: true, detail: `${body.count} задач в ответе` })
+  } catch (error) {
+    results.push({ name: 'D2: очередь задач доступна панели', pass: false, detail: String(error) })
   }
 
   // Human control blocks agent mutations.

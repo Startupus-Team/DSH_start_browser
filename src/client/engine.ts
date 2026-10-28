@@ -1195,6 +1195,25 @@ export function startEngine(): () => void {
               await report(base as string, { network: { error: String(error), at: Date.now() } })
             }
           }
+        } else if (command.kind === 'measure') {
+          const view = await readyView(command)
+          const selector = String(command.args.selector ?? '')
+          const properties = Array.isArray(command.args.properties) ? command.args.properties.map(String).slice(0, 8) : []
+          if (view === null || view.executeJavaScript === undefined) {
+            await report(base as string, { measure: { error: 'E_GUEST_GONE: гость вкладки недоступен', at: Date.now() } })
+          } else {
+            const values: Record<string, string> = {}
+            for (const property of properties) {
+              try {
+                const raw = await withTimeout(view.executeJavaScript(measureScript(selector, 'computed', property, ''), false), 4000, 'E_TIMEOUT')
+                const parsed = typeof raw === 'string' ? JSON.parse(raw) as { value?: string; error?: string } : {}
+                values[property] = String(parsed.value ?? parsed.error ?? '')
+              } catch (error) {
+                values[property] = `E_MEASURE: ${String(error)}`
+              }
+            }
+            await report(base as string, { measure: { selector, values, at: Date.now() } })
+          }
         } else if (command.kind === 'inspect') {
           const view = await readyView(command)
           const selector = String(command.args.selector ?? '')

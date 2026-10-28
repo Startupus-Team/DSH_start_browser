@@ -55,6 +55,15 @@ const STYLES = `
 .dsh-startapus-browser-address { flex:1; min-width:0; height:26px; padding:0 8px; border:1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius:6px; background:transparent; color:inherit; font:inherit; outline:none; }
 .dsh-startapus-browser-status { padding:4px 10px 8px; opacity:0.72; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-startapus-browser-host { flex:1; min-height:0; }
+.dsh-startapus-browser-tasksBtn { width:auto; padding:0 8px; font-size:11px; }
+.dsh-startapus-browser-tasks { position:absolute; top:34px; left:8px; right:8px; max-height:60%; overflow:auto; z-index:7; display:flex; flex-direction:column; gap:6px; padding:8px; border-radius:8px; background:color-mix(in srgb, #111 92%, white 8%); box-shadow:0 6px 24px rgba(0,0,0,0.4); font-size:11px; }
+.dsh-startapus-browser-tasksHead { display:flex; align-items:center; justify-content:space-between; }
+.dsh-startapus-browser-tasks ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:4px; }
+.dsh-startapus-browser-tasks li { display:grid; grid-template-columns:auto 1fr; gap:2px 6px; padding:4px 6px; border-radius:6px; background:color-mix(in srgb, currentColor 6%, transparent); }
+.dsh-startapus-browser-taskState { grid-row:span 2; align-self:center; font-size:10px; padding:1px 6px; border-radius:10px; background:color-mix(in srgb, currentColor 12%, transparent); }
+.dsh-startapus-browser-taskText { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.dsh-startapus-browser-taskMeta { opacity:0.6; }
+.dsh-startapus-browser-tasksEmpty, .dsh-startapus-browser-tasksErr { opacity:0.7; }
 .dsh-startapus-browser-crash { position:absolute; top:34px; left:8px; right:8px; z-index:6; display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px; border-radius:6px; font-size:11px; background:color-mix(in srgb, #d9534f 28%, #111 72%); box-shadow:0 2px 10px rgba(0,0,0,0.3); }
 .dsh-startapus-browser-crash button { font-size:11px; padding:2px 8px; cursor:pointer; }
 .dsh-startapus-browser-control { position:absolute; top:34px; left:8px; right:8px; z-index:5; display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; font-size:11px; background:color-mix(in srgb, #f5a623 22%, #111 78%); box-shadow:0 2px 10px rgba(0,0,0,0.25); }
@@ -90,6 +99,9 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   /** While the address field is focused it is the single source of truth. */
   const [editing, setEditing] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [tasksOpen, setTasksOpen] = useState(false)
+  const [taskRows, setTaskRows] = useState<Array<{ id: string; problem: string; state: string; attempts: number }>>([])
+  const [tasksError, setTasksError] = useState('')
   const pickingRef = useRef(false)
 
   useEffect(() => {
@@ -251,6 +263,26 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           }}
           aria-label="Адрес"
         />
+        <button
+          type="button"
+          className="dsh-startapus-browser-btn dsh-startapus-browser-tasksBtn"
+          onClick={() => {
+            const next = !tasksOpen
+            setTasksOpen(next)
+            if (!next) return
+            setTasksError('')
+            void fetch(`${location.origin}/startapus-browser/tasks`)
+              .then((response) => response.json())
+              .then((body: { tasks?: Array<{ id: string; problem: string; state: string; attempts: number }> }) => {
+                setTaskRows(Array.isArray(body.tasks) ? body.tasks.slice(-30).reverse() : [])
+              })
+              .catch((error: unknown) => setTasksError(String(error)))
+          }}
+          title="Очередь задач ревью"
+          aria-label="Очередь задач ревью"
+        >
+          Задачи
+        </button>
         <button type="button" className="dsh-startapus-browser-btn" onClick={copyAddress} title="Скопировать адрес" aria-label="Скопировать адрес"><FiCopy /></button>
         <button type="button" className="dsh-startapus-browser-btn" onClick={openExternally} title="Открыть в браузере по умолчанию" aria-label="Открыть в браузере по умолчанию"><FiExternalLink /></button>
         <button
@@ -263,6 +295,25 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           <FiCrosshair />
         </button>
       </div>
+      {tasksOpen && (
+        <div className="dsh-startapus-browser-tasks" role="dialog" aria-label="Очередь задач">
+          <div className="dsh-startapus-browser-tasksHead">
+            <strong>Очередь задач</strong>
+            <button type="button" onClick={() => setTasksOpen(false)}>Закрыть</button>
+          </div>
+          {tasksError !== '' && <div className="dsh-startapus-browser-tasksErr">{tasksError}</div>}
+          {taskRows.length === 0 && tasksError === '' && <div className="dsh-startapus-browser-tasksEmpty">Задач нет</div>}
+          <ul>
+            {taskRows.map((row) => (
+              <li key={row.id}>
+                <span className={`dsh-startapus-browser-taskState state-${row.state}`}>{row.state}</span>
+                <span className="dsh-startapus-browser-taskText">{row.problem}</span>
+                <span className="dsh-startapus-browser-taskMeta">{row.id} · попыток {row.attempts}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {(() => {
         const crash = crashedInfo(tabKey)
         if (crash === null) return null

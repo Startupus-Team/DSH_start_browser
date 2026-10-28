@@ -68,6 +68,7 @@ const pickerChecks = [
   ['проверка нонса в панели', readFileSync('src/client/panel.tsx', 'utf8').includes('pick.nonce !== nonce')],
   ['E_GUEST_GONE в движке', engineSource.includes('E_GUEST_GONE')],
   ['пикер по ⌘⇧P', indexSource.includes('startapus-browser.pick') && indexSource.includes('requestPick()')],
+  ['экран очереди задач', readFileSync('src/client/panel.tsx', 'utf8').includes('/startapus-browser/tasks')],
 ]
 for (const [name, ok] of pickerChecks) {
   if (!ok) {
