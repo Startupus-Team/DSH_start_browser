@@ -1047,7 +1047,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           if (row.tab !== key && row.tab !== '*') return false
           // A page command belongs to the one instance that both has a guest and is
           // actually on screen; stale instances keep polling but take nothing.
-          if (pageKind(row.kind) && pollInstance !== undefined && (!pollInstance.attached || pollInstance.visible === false)) return false
+          if (pageKind(row.kind) && pollInstance !== undefined && (!pollInstance.attached || pollInstance.visible !== true)) return false
           return true
         })
         if (index >= 0) {
