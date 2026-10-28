@@ -60,21 +60,25 @@ console.log('\n== market index (format 1) ==')
 const publishTimestamp = Math.floor(Date.now() / 1000)
 const index = {
   format: 1,
-  title: { en: 'Startapus plugins', ru: 'Плагины Startapus' },
+  title: { en: 'Startapus plugins', ru: 'Плагины Startapus', zh: 'Startapus 插件' },
   description: {
     en: 'Bundles published for DSH by Startapus.',
     ru: 'Бандлы для DSH, опубликованные Startapus.',
+    zh: '由 Startapus 发布、适用于 DSH 的插件包。',
   },
   metadata: {
-    categories: { browser: { title: { en: 'Browser', ru: 'Браузер' } } },
+    categories: {
+      browser: { title: { en: 'Browser', ru: 'Браузер', zh: '浏览器' } },
+    },
   },
   plugins: [
     {
       name: pkg.name,
-      title: { en: 'Startapus Browser', ru: 'Startapus Browser' },
+      title: { en: 'Startapus Browser', ru: 'Startapus Browser', zh: 'Startapus 浏览器' },
       description: {
         en: 'A real webview browser tab in the DSH right sidebar with agent tools and an element picker.',
-        ru: 'Настоящий браузер во правой панели DSH: агентские инструменты и пикер элементов.',
+        ru: 'Настоящий браузер в правой панели DSH: агентские инструменты и пикер элементов.',
+        zh: 'DSH 右侧边栏中的真实 webview 浏览器标签页，内置智能体工具与页面元素选择器。',
       },
       icon: pkg.icon ?? 'icon.svg',
       metadata: { category: 'browser', keywords: ['browser', 'webview', 'review', 'screenshot'] },
