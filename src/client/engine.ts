@@ -57,6 +57,8 @@ interface Session {
 
 export interface EngineState {
   stage: string
+  control: 'agent' | 'human' | null
+  agentActive: boolean
   status: string
   activeTab: string | null
   tabs: number
@@ -87,6 +89,11 @@ let activeTabId: string | null = null
 let loopStarted = false
 let misses = 0
 let base: string | null = null
+/** Who currently drives the page: the agent, or the human (via the pane button). */
+let controlHolder: 'agent' | 'human' | null = null
+/** While now < this, the agent has been acting recently — show the banner. */
+let agentActiveUntil = 0
+const AGENT_ACTIVE_MS = 10000
 let closeRequested: () => boolean = () => false
 let pickRequested: () => void = () => undefined
 /** Opening a tab through the pane's own bound actions (falls back to the controller). */
@@ -122,6 +129,8 @@ export function panelsMounted(): number {
 export function engineState(): EngineState {
   return {
     stage,
+    control: controlHolder,
+    agentActive: Date.now() < agentActiveUntil,
     status,
     activeTab: activeTabId,
     tabs: sessions.size,
@@ -150,6 +159,30 @@ function notify(): void {
 /** Update the human-readable status line. */
 export function setStatus(next: string): void {
   status = next
+  notify()
+}
+
+/** The human takes the page back: agent mutations are refused from now on. */
+export function takeHumanControl(): void {
+  controlHolder = 'human'
+  agentActiveUntil = 0
+  setStatus('управление у вас: действия агента на странице приостановлены')
+  notify()
+}
+
+/** The human hands the page back to the agent. */
+export function releaseToAgent(): void {
+  controlHolder = 'agent'
+  agentActiveUntil = Date.now() + AGENT_ACTIVE_MS
+  setStatus('управление у агента')
+  notify()
+}
+
+/** Called when the agent performs a mutating action. */
+export function noteAgentAction(): void {
+  if (controlHolder === 'human') return
+  controlHolder = 'agent'
+  agentActiveUntil = Date.now() + AGENT_ACTIVE_MS
   notify()
 }
 
@@ -617,7 +650,11 @@ export function startEngine(): void {
               await report(base as string, { pageScan: { error: String(error) } })
             }
           }
+        } else if (command.kind === 'act_batch' && controlHolder === 'human') {
+          await report(base as string, { actResults: [{ op: '-', status: 'ERROR', message: 'E_HUMAN_CONTROL: управление у человека' }] })
+          setStatus('агент: пакет действий отклонён — управление у вас')
         } else if (command.kind === 'act_batch') {
+          noteAgentAction()
           const view = activeGuest()
           const items = Array.isArray(command.args.items)
             ? command.args.items as Array<{ op: string; selector: string; value: string }>
@@ -706,7 +743,11 @@ export function startEngine(): void {
               await report(base as string, { selectResult: { selector, status: 'ERROR', count: 0 } })
             }
           }
+        } else if (command.kind === 'act' && controlHolder === 'human') {
+          await report(base as string, { actResult: { op: String(command.args.op ?? ''), status: 'ERROR', message: 'E_HUMAN_CONTROL: управление у человека' } })
+          setStatus('агент: действие отклонено — управление у вас')
         } else if (command.kind === 'act') {
+          noteAgentAction()
           const view = activeGuest()
           const op = String(command.args.op ?? '')
           const selector = String(command.args.selector ?? '')
@@ -948,6 +989,8 @@ export function startEngine(): void {
         sessions: listSessions(),
         activeTab: activeTabId,
         panels: mountedPaneKeys.size,
+        control: controlHolder,
+        agentActive: Date.now() < agentActiveUntil,
       })
     }
 

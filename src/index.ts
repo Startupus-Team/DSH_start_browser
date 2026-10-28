@@ -82,6 +82,8 @@ interface ClientState {
   sessions: Array<{ tabId: string; url: string; title: string }>
   engineActive: string | null
   panels: number | null
+  control: 'agent' | 'human' | null
+  agentActive: boolean
   panelStatus: string
   hasGuest: boolean
   lastCommand: { id: string; kind: string; at: number } | null
@@ -277,6 +279,8 @@ function blankClient(): ClientState {
   sessions: [],
   engineActive: null,
   panels: null,
+  control: null,
+  agentActive: false,
   panelStatus: '',
   hasGuest: false,
   lastCommand: null,
@@ -909,6 +913,8 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         counters: totals(),
         sessions: client.sessions,
         panels: client.panels,
+        control: client.control,
+        agentActive: client.agentActive,
         engineActive: client.engineActive,
         transport: hasTransport(),
         clientAgeMs: clientAgeMs(),
@@ -976,6 +982,10 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       }
       if (typeof body.activeTab === 'string' && body.activeTab !== '') client.engineActive = body.activeTab
       if (typeof body.panels === 'number') client.panels = body.panels
+      if (body.control === 'agent' || body.control === 'human' || body.control === null) {
+        client.control = body.control as 'agent' | 'human' | null
+      }
+      if (typeof body.agentActive === 'boolean') client.agentActive = body.agentActive
       if (typeof body.url === 'string') client.url = body.url
       if (typeof body.viewport === 'object' && body.viewport !== null) {
         client.viewport = body.viewport as { width: number; height: number }
@@ -1483,6 +1493,9 @@ function buildTools(): Array<Record<string, unknown>> {
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
         requireTransport()
+        if (client.control === 'human') {
+          throw new Error('E_HUMAN_CONTROL: человек забрал управление — попросите вернуть его кнопкой в панели')
+        }
         const url = validateUrl(args.url)
         const origin = new URL(url).origin
         if (!approvedOrigins.has(origin) && args.confirmOrigin !== true) {
@@ -1743,6 +1756,9 @@ function buildTools(): Array<Record<string, unknown>> {
       output: output(asText),
       execute: (args: Record<string, unknown>) => {
         requireTransport()
+        if (client.control === 'human') {
+          throw new Error('E_HUMAN_CONTROL: человек забрал управление — попросите вернуть его кнопкой в панели')
+        }
         const batch = Array.isArray(args.items) ? args.items : null
         if (batch !== null) {
           if (batch.length === 0) throw new Error('E_NO_EFFECT: пустой пакет действий')
@@ -2277,6 +2293,35 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'FR-11b: baseline фиксируется при создании задачи', pass: true, detail: 'baseline=12px → false; ожидалось 12px → true' })
   } catch (error) {
     results.push({ name: 'FR-11b: baseline фиксируется при создании задачи', pass: false, detail: String(error) })
+  }
+
+  // Human control blocks agent mutations.
+  try {
+    seedTransport()
+    client.control = 'human'
+    let blocked = false
+    try {
+      call('ui_act', { op: 'scroll', value: '10' })
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error)
+      if (!message.startsWith('E_HUMAN_CONTROL')) throw error
+      blocked = true
+    }
+    let openBlocked = false
+    try {
+      call('ui_open', { url: 'https://example.test/', confirmOrigin: true })
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error)
+      if (!message.startsWith('E_HUMAN_CONTROL')) throw error
+      openBlocked = true
+    }
+    client.control = 'agent'
+    commands.length = 0
+    if (!blocked || !openBlocked) throw new Error(`ui_act=${blocked}, ui_open=${openBlocked}`)
+    results.push({ name: 'CTRL-1: перехват управления человеком блокирует агента', pass: true, detail: 'ui_act и ui_open → E_HUMAN_CONTROL' })
+  } catch (error) {
+    client.control = null
+    results.push({ name: 'CTRL-1: перехват управления человеком блокирует агента', pass: false, detail: String(error) })
   }
 
   // Audit regressions: client marker, control-tool limits, per-tab evidence.

@@ -27,6 +27,8 @@ import {
   engineState,
   guestOf,
   hideSession,
+  releaseToAgent,
+  takeHumanControl,
   notePanelMounted,
   notePanelUnmounted,
   runInActive,
@@ -51,6 +53,8 @@ const STYLES = `
 .dsh-startapus-browser-address { flex:1; min-width:0; height:26px; padding:0 8px; border:1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius:6px; background:transparent; color:inherit; font:inherit; outline:none; }
 .dsh-startapus-browser-status { padding:4px 10px 8px; opacity:0.72; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-startapus-browser-host { flex:1; min-height:0; }
+.dsh-startapus-browser-control { display:flex; align-items:center; gap:8px; padding:5px 8px; font-size:11px; border-bottom:1px solid color-mix(in srgb, currentColor 12%, transparent); background:color-mix(in srgb, #f5a623 14%, transparent); }
+.dsh-startapus-browser-control button { border:1px solid currentColor; border-radius:5px; background:transparent; color:inherit; font:inherit; padding:2px 8px; cursor:pointer; }
 `
 
 interface PanelProps {
@@ -252,6 +256,24 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           <FiCrosshair />
         </button>
       </div>
+      {(snapshot.agentActive || snapshot.control === 'human') && (
+        <div className="dsh-startapus-browser-control">
+          <span>
+            {snapshot.control === 'human'
+              ? 'Управление у вас: действия агента на странице приостановлены'
+              : 'Агент управляет страницей'}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              if (snapshot.control === 'human') releaseToAgent()
+              else takeHumanControl()
+            }}
+          >
+            {snapshot.control === 'human' ? 'Вернуть агенту' : 'Забрать управление'}
+          </button>
+        </div>
+      )}
       <div ref={hostRef} className="dsh-startapus-browser-host" />
       <div className="dsh-startapus-browser-status">{snapshot.status}</div>
     </div>

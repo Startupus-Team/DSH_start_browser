@@ -249,8 +249,17 @@ await check('E10: навигация адресуется своей сесси�
   return 'A навигировался, B не тронут'
 })
 
+await check('E11: передача управления меняет состояние', () => {
+  engine.takeHumanControl()
+  expect(engine.engineState().control === 'human', 'control не стал human')
+  engine.releaseToAgent()
+  expect(engine.engineState().control === 'agent', 'control не стал agent')
+  expect(engine.engineState().agentActive === true, 'agentActive не включился')
+  return 'human → agent'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 10/10')
+console.log('ENGINE OK: 11/11')
