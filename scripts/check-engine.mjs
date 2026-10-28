@@ -230,8 +230,24 @@ await check('E9: мёртвая сессия не маскирует живую'
   return `activeGuest → ${engine.listSessions().find((row) => row.tabId === live.tabId)?.url ?? 'живая сессия'}`
 })
 
+await check('E10: навигация адресуется своей сессии', async () => {
+  const first = engine.listSessions()[0]
+  expect(first !== undefined, 'нет сессий')
+  const hostB = new FakeElement('div')
+  body.appendChild(hostB)
+  await engine.showSession('nav-b', 'https://nav-b.example/', hostB)
+  engine.guestOf('nav-b').fire('dom-ready')
+  const guestA = engine.guestOf(first.tabId)
+  expect(guestA !== null && engine.guestOf('nav-b') !== null, 'гости не созданы')
+  const beforeB = engine.guestOf('nav-b').loadedUrls.length
+  guestA.loadURL('https://nav-a.example/next')
+  expect(engine.guestOf('nav-b').loadedUrls.length === beforeB, 'навигация A задела B')
+  expect(guestA.loadedUrls.includes('https://nav-a.example/next'), 'навигация A не применилась')
+  return 'A навигировался, B не тронут'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 9/9')
+console.log('ENGINE OK: 10/10')

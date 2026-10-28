@@ -25,6 +25,7 @@ import {
   detachSession,
   disposeSession,
   engineState,
+  guestOf,
   hideSession,
   notePanelMounted,
   notePanelUnmounted,
@@ -169,17 +170,22 @@ function PanelChrome(props: PanelProps): React.ReactNode {
       setStatus(`адрес: ${resolved.reason}`)
       return
     }
-    activeGuest()?.loadURL?.(resolved.url)
+    const guest = guestOf(tabKey) ?? activeGuest()
+    if (guest === null) {
+      setStatus('навигация: гость этой вкладки ещё не готов')
+      return
+    }
+    guest.loadURL?.(resolved.url)
     setStatus(`открываю ${resolved.url}`)
   }, [])
 
   const go = useCallback((direction: 'back' | 'forward' | 'reload'): void => {
-    const guest = activeGuest()
+    const guest = guestOf(tabKey) ?? activeGuest()
     if (guest === null) return
     if (direction === 'back') guest.goBack?.()
     else if (direction === 'forward') guest.goForward?.()
     else guest.reload?.()
-  }, [])
+  }, [tabKey])
 
   const copyAddress = useCallback((): void => {
     const target = snapshot.url === '' ? draft : snapshot.url
