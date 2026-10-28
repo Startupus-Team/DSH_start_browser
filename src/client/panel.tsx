@@ -23,7 +23,6 @@ import type { ElementPick } from './element-refs.ts'
 import {
   activeGuest,
   detachSession,
-  disposeSession,
   engineState,
   guestOf,
   hideSession,
@@ -40,7 +39,6 @@ import {
   subscribeEngine,
 } from './engine'
 import { normalizeAddress } from './rules'
-import { forgetClosing, isTabClosing } from './tabs'
 import { PICKER_POLL, PICKER_SCRIPT } from './picker-source'
 
 
@@ -113,14 +111,10 @@ function PanelChrome(props: PanelProps): React.ReactNode {
     observer.observe(host)
     return () => {
       observer.disconnect()
-      if (isTabClosing(tabKey)) {
-        // The kernel is closing this tab and owns the lease: forget the session
-        // without releasing it a second time.
-        forgetClosing(tabKey)
-        disposeSession(tabKey)
-      } else {
-        detachSession(tabKey)
-      }
+      // Unmount is not a close: React re-mounts panes (StrictMode, layout moves)
+      // and the kernel owns the real teardown. Disposing here left live tabs with
+      // no page at all, so the view only hides its container.
+      detachSession(tabKey)
     }
   }, [tabKey, initialUrl])
 
