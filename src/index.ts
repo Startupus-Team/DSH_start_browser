@@ -1948,6 +1948,9 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         guestState: client.guestState,
         lastCommand: client.lastCommand,
         targetTab: client.engineActive,
+        // Which tab a command without tabId lands on, and what else is open: pass tabId when it matters.
+        activeTab: client.engineActive,
+        tabs: client.sessions.map((row) => ({ tabId: row.tabId, url: row.url, title: row.title })),
         captureError: client.captureError,
         counters: client.counters,
       }),

@@ -755,3 +755,42 @@ export function netHookScript(): string {
     }
   })()`
 }
+
+/**
+ * Rectangle to screenshot for an element, in viewport pixels.
+ *
+ * The element is scrolled into view first (a rect below the fold captures nothing), a zero-size
+ * container falls back to the union of its visible descendants (`display: contents`, floated or
+ * absolutely positioned children), and the result is clamped to the viewport.
+ */
+export function captureRectScript(selector: string): string {
+  return `(() => {
+    try {
+      var el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) return JSON.stringify({ status: 'MISSING' });
+      if (el.scrollIntoView) el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      var r = el.getBoundingClientRect();
+      var left = r.left, top = r.top, right = r.right, bottom = r.bottom;
+      var source = 'element';
+      if (r.width < 2 || r.height < 2) {
+        var found = false;
+        var all = el.querySelectorAll('*');
+        for (var i = 0; i < all.length && i < 800; i += 1) {
+          var c = all[i].getBoundingClientRect();
+          if (c.width < 1 || c.height < 1) continue;
+          if (!found) { left = c.left; top = c.top; right = c.right; bottom = c.bottom; found = true; }
+          else { left = Math.min(left, c.left); top = Math.min(top, c.top); right = Math.max(right, c.right); bottom = Math.max(bottom, c.bottom); }
+        }
+        if (found) source = 'descendants';
+        else return JSON.stringify({ status: 'EMPTY', message: 'у элемента нет видимого содержимого (нулевой размер и нет видимых потомков)' });
+      }
+      var vw = window.innerWidth, vh = window.innerHeight;
+      var x = Math.max(0, Math.round(left)), y = Math.max(0, Math.round(top));
+      var w = Math.min(vw, Math.round(right)) - x, h = Math.min(vh, Math.round(bottom)) - y;
+      if (w < 1 || h < 1) return JSON.stringify({ status: 'EMPTY', message: 'элемент вне окна просмотра даже после прокрутки' });
+      return JSON.stringify({ status: 'OK', rect: { x: x, y: y, width: w, height: h }, source: source, clamped: Math.round(right) > vw || Math.round(bottom) > vh });
+    } catch (error) {
+      return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
+    }
+  })()`
+}

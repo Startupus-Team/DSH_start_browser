@@ -608,8 +608,33 @@ check('R26: ui_js — ограничение времени выполнения
   return '1–60 с, по умолчанию 8 с'
 })
 
+const runRect = (el, viewport = { w: 1000, h: 600 }) => JSON.parse(vm.runInNewContext(scripts.captureRectScript('#r'), {
+  document: { querySelector: (selector) => (selector === '#r' ? el : null) },
+  window: { innerWidth: viewport.w, innerHeight: viewport.h },
+}))
+const box = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height })
+check('R27: прямоугольник снимка элемента — прокрутка, потомки, обрезка', () => {
+  const plain = runRect({ scrollIntoView() {}, getBoundingClientRect: () => box(10, 20, 300, 100), querySelectorAll: () => [] })
+  expect(plain.status === 'OK' && plain.rect.width === 300 && plain.rect.height === 100 && plain.source === 'element', JSON.stringify(plain))
+  // Below the fold: scrollIntoView brings it into view before the rect is read.
+  const lazy = { position: 2000, scrollIntoView() { this.position = 200 }, getBoundingClientRect() { return box(0, this.position, 400, 80) }, querySelectorAll: () => [] }
+  expect(runRect(lazy).rect.y === 200, 'снимок до прокрутки')
+  // display: contents / collapsed container: union of visible descendants instead of a 995x1 sliver.
+  const kids = [box(5, 50, 400, 30), box(5, 90, 995, 30), box(0, 0, 0, 0)].map((b) => ({ getBoundingClientRect: () => b }))
+  const collapsed = runRect({ scrollIntoView() {}, getBoundingClientRect: () => box(5, 50, 995, 1), querySelectorAll: () => kids })
+  expect(collapsed.status === 'OK' && collapsed.source === 'descendants' && collapsed.rect.height === 70 && collapsed.rect.width === 995, JSON.stringify(collapsed))
+  const empty = runRect({ scrollIntoView() {}, getBoundingClientRect: () => box(0, 0, 0, 0), querySelectorAll: () => [{ getBoundingClientRect: () => box(0, 0, 0, 0) }] })
+  expect(empty.status === 'EMPTY' && empty.message.includes('нет видимого'), JSON.stringify(empty))
+  const tall = runRect({ scrollIntoView() {}, getBoundingClientRect: () => box(0, 100, 2000, 3000), querySelectorAll: () => [] })
+  expect(tall.rect.width === 1000 && tall.rect.y + tall.rect.height <= 600 && tall.clamped === true, `обрезка по окну: ${JSON.stringify(tall)}`)
+  const offscreen = runRect({ scrollIntoView() {}, getBoundingClientRect: () => box(0, 900, 100, 100), querySelectorAll: () => [] })
+  expect(offscreen.status === 'EMPTY' && offscreen.message.includes('вне окна'), JSON.stringify(offscreen))
+  expect(JSON.parse(vm.runInNewContext(scripts.captureRectScript('#nope'), { document: { querySelector: () => null }, window: {} })).status === 'MISSING', 'MISSING')
+  return 'прокрутка к элементу, объединение потомков вместо 995×1, обрезка по окну, пустой/вне окна → EMPTY'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 26/26')
+console.log('RULES OK: 27/27')

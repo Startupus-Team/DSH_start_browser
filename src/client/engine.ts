@@ -11,7 +11,7 @@
  */
 
 import type { ElementPick } from './element-refs.ts'
-import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript, netHookScript } from './verify-scripts'
+import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript, netHookScript, captureRectScript } from './verify-scripts'
 import { captureKey, cropRect as clampCropRect, diffPixels, normalizeAddress, jsTimeoutMs, normalizeWait, pickSessionToEvict, rememberedScheme, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
@@ -1538,11 +1538,14 @@ export function startEngine(): () => void {
             try {
               let rect: { x: number; y: number; width: number; height: number } | undefined
               if (selector !== '' && view.executeJavaScript !== undefined) {
-                const rawRect = await view.executeJavaScript(
-                  `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return ''; const r = el.getBoundingClientRect(); return JSON.stringify({ x: Math.max(0, Math.round(r.left)), y: Math.max(0, Math.round(r.top)), width: Math.max(1, Math.round(r.width)), height: Math.max(1, Math.round(r.height)) }) })()`,
-                  false,
-                )
-                if (typeof rawRect === 'string' && rawRect !== '') rect = JSON.parse(rawRect) as typeof rect
+                const rawRect = await withTimeout(view.executeJavaScript(captureRectScript(selector), false), 5000, 'E_TIMEOUT')
+                const parsedRect = typeof rawRect === 'string' && rawRect !== ''
+                  ? JSON.parse(rawRect) as { status?: string; rect?: { x: number; y: number; width: number; height: number }; message?: string; source?: string }
+                  : {}
+                if (parsedRect.status === 'OK' && parsedRect.rect !== undefined) rect = parsedRect.rect
+                else if (parsedRect.status === 'EMPTY' || parsedRect.status === 'MISSING') {
+                  throw new Error(parsedRect.status === 'MISSING' ? `E_NOT_FOUND: нет элемента ${selector}` : `E_EMPTY: ${parsedRect.message ?? 'нечего снимать'}`)
+                }
               }
               await report(base as string, { captureStage: { step: 'capturing', hasRect: rect !== undefined } })
               // Sub-rect captures can fail with `UnknownVizError`; the helper retries
