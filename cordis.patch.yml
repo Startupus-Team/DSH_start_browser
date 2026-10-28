@@ -6,5 +6,5 @@
   - id: startapus-browser
     name: startapus-browser
     config:
-      startUrl: about:blank
+      startUrl: https://startapus.com
       allowArbitrarySites: true

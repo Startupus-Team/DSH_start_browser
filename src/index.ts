@@ -2570,7 +2570,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
  * @param config - resolved plugin config.
  */
 export function apply(ctx: Context, config: Config = {}): void {
-  const startUrl = typeof config.startUrl === 'string' && config.startUrl !== '' ? config.startUrl : 'https://ya.ru/'
+  const startUrl = typeof config.startUrl === 'string' && config.startUrl !== '' ? config.startUrl : 'https://startapus.com'
   const arbitrary = config.allowArbitrarySites !== false
 
   probe('apply:start', { startUrl, arbitrary })

@@ -78,7 +78,7 @@ export function StartapusBrowserPanel(props: PanelProps): React.ReactNode {
 
 function PanelChrome(props: PanelProps): React.ReactNode {
   const tabKey = props.tabKey ?? 'startapus-browser'
-  const initialUrl = typeof props.params?.url === 'string' ? props.params.url : 'https://ya.ru/'
+  const initialUrl = typeof props.params?.url === 'string' ? props.params.url : 'https://startapus.com'
   const hostRef = useRef<HTMLDivElement | null>(null)
   const [snapshot, setSnapshot] = useState(() => engineState())
   const [draft, setDraft] = useState(initialUrl)

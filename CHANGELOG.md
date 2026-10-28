@@ -1,5 +1,13 @@
 # Changelog — startapus-browser
 
+## 0.20.7
+
+### Изменено
+
+- **Сайт по умолчанию — `https://startapus.com`** (было `https://ya.ru/`): в движке (`START_URL`),
+  в панели (fallback адресной строки), в дефолте host-конфига и в bundle-overlay
+  (`cordis.patch.yml → startUrl`). Адресная строка по-прежнему открывает любой http(s) адрес.
+
 ## 0.20.6
 
 ### Изменено

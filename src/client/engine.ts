@@ -72,7 +72,7 @@ const WORKSPACE_KEY = 'startapus-browser'
 /** Guests are expensive: keep the pool small and drop idle pages. */
 const MAX_SESSIONS = 6
 const SESSION_IDLE_MS = 15 * 60 * 1000
-const START_URL = 'https://ya.ru/'
+const START_URL = 'https://startapus.com'
 
 const sessions = new Map<string, Session>()
 /** In-flight creations, so a re-render cannot acquire several leases. */

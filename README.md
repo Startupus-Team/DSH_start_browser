@@ -6,6 +6,8 @@
 
 ## Что умеет
 
+Стартовая страница по умолчанию — `https://startapus.com`.
+
 - вкладка **Startapus Browser** в правом сайдбаре (`sidebar.right.pane.tab`);
 - произвольные `http(s)`-адреса в `<webview>` (без ограничений `X-Frame-Options`/CSP,
   которые накладывает iframe);
