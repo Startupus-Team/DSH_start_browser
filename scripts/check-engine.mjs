@@ -274,22 +274,21 @@ await check('E12: параллельная активация = одна сес�
   return '3 вызова → 1 acquire, 1 сессия'
 })
 
-await check('E13: падение гостя восстанавливает страницу', async () => {
+await check('E13: падение рендерера закрывает вкладку (как в ядре)', async () => {
   const hostCrash = new FakeElement('div')
   body.appendChild(hostCrash)
   await engine.showSession('crash', 'https://crash.example/', hostCrash)
   const guest = engine.guestOf('crash')
   expect(guest !== null, 'гость не создан')
   guest.fire('dom-ready')
-  const before = engine.engineState().counters.recoveries
+  const before = engine.engineState().counters.crashes
   guest.fire('render-process-gone')
   await new Promise((resolve) => setTimeout(resolve, 20))
-  await new Promise((resolve) => setTimeout(resolve, 20))
-  const after = engine.engineState().counters.recoveries
-  expect(after === before + 1, `recoveries: ${before} → ${after}`)
-  const fresh = engine.guestOf('crash')
-  expect(fresh !== null && fresh !== guest, 'гость не пересоздан')
-  return 'render-process-gone → recoveries+1, новый гость'
+  expect(engine.guestOf('crash') === null, 'вкладка не закрыта после падения рендерера')
+  expect(!engine.listSessions().some((row) => row.tabId === 'crash'), 'мёртвая сессия осталась')
+  const after = engine.engineState().counters.crashes
+  expect(after === before + 1, `crashes: ${before} → ${after}`)
+  return 'render-process-gone → вкладка закрыта, crashes+1'
 })
 
 await check('E14: навигация до dom-ready не падает и применяется после', async () => {
@@ -329,7 +328,6 @@ await check('E16: восстановление гостя не превраща�
   guest.fire('dom-ready')
   const before = engine.engineState().counters.recoveries
   const releasesBefore = engine.engineState().counters.releases
-  guest.fire('render-process-gone')
   guest.fire('destroyed')
   await new Promise((resolve) => setTimeout(resolve, 20))
   const after = engine.engineState().counters.recoveries
@@ -359,7 +357,7 @@ await check('E17: серия падений останавливается (E_GU
       const guest = engine.guestOf('storm')
       if (guest === null) break
       clock += 3100
-      guest.fire('render-process-gone')
+      guest.fire('destroyed')
       await new Promise((resolve) => setTimeout(resolve, 20))
     }
     const grown = engine.engineState().counters.recoveries - before

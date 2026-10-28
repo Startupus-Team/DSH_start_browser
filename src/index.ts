@@ -100,7 +100,7 @@ interface ClientState {
   lastCommand: { id: string; kind: string; at: number } | null
   captureError: string | null
   hidden: boolean
-  counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number; navigations: number; loadErrors: number }
+  counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number; navigations: number; loadErrors: number; crashes: number }
 }
 
 /** One review task. */
@@ -260,7 +260,7 @@ const approvedOrigins = new Set<string>()
 
 /** Counters summed over every known tab. */
 function totals(): ClientState['counters'] {
-  const sum = { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0 }
+  const sum = { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0, crashes: 0 }
   for (const state of tabState.values()) {
     sum.acquires += state.counters.acquires
     sum.releases += state.counters.releases
@@ -269,6 +269,7 @@ function totals(): ClientState['counters'] {
     sum.panics += state.counters.panics
     sum.navigations += state.counters.navigations ?? 0
     sum.loadErrors += state.counters.loadErrors ?? 0
+    sum.crashes += state.counters.crashes ?? 0
   }
   return sum
 }
@@ -320,7 +321,7 @@ function blankClient(): ClientState {
   lastCommand: null,
   captureError: null,
   hidden: false,
-    counters: { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0 },
+    counters: { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0, crashes: 0 },
   }
 }
 

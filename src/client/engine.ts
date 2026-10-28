@@ -70,7 +70,7 @@ export interface EngineState {
   tabs: number
   url: string
   hasGuest: boolean
-  counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number; navigations: number; loadErrors: number }
+  counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number; navigations: number; loadErrors: number; crashes: number }
   panels: number
 }
 
@@ -87,7 +87,7 @@ const sessions = new Map<string, Session>()
 /** In-flight creations, so a re-render cannot acquire several leases. */
 const pending = new Map<string, Promise<Session | null>>()
 const consoleRing: Array<{ level: number; message: string }> = []
-const counters = { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0 }
+const counters = { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0, crashes: 0 }
 /** Last navigation failure as the guest reported it. */
 let lastLoadError: { code: number; description: string; url: string; at: number } | null = null
 
@@ -548,6 +548,23 @@ function handleGuestLoss(session: Session, kind: string): void {
   if (session.guest === null) return
   // A closed session is disposed on purpose: no recovery, no counter.
   if (sessions.get(session.tabId) !== session) return
+  if (kind.startsWith('render-process-gone') || kind.startsWith('crashed')) {
+    // The kernel closes a tab whose renderer died (`render-process-gone` handler in
+    // the built-in browser does the same). Rebuilding on a dead lease is what made
+    // the panel flicker in a loop; here we dispose and say so.
+    counters.crashes += 1
+    sessions.delete(session.tabId)
+    releaseLease(session)
+    try {
+      session.container.remove()
+    } catch {
+      // already gone
+    }
+    setStatus(`рендерер упал (${kind}) — вкладка закрыта, откройте её заново ⌘T`)
+    probe('guest:crashed', { tabId: session.tabId, kind, url: session.url.slice(0, 120) })
+    notify()
+    return
+  }
   const now = Date.now()
   if (now - session.lastRecoveryAt < 3000) return
   session.lastRecoveryAt = now

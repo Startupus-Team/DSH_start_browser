@@ -90,6 +90,10 @@ if (typeof counters.recoveries === 'number' && typeof counters.releases === 'num
   console.log(`FAIL  утечка lease: recoveries ${counters.recoveries} > releases ${counters.releases} — каждый падение без release`)
   failed += 1
 }
+if (typeof counters.crashes === 'number' && counters.crashes > 0) {
+  console.log(`FAIL  рендерер падал ${counters.crashes} раз(а) — вкладка закрывается по контракту ядра`)
+  failed += 1
+}
 if (typeof counters.recoveries === 'number' && counters.recoveries > 10) {
   console.log(`FAIL  шторм восстановлений: recoveries ${counters.recoveries} — гость циклически пересоздаётся`)
   failed += 1
