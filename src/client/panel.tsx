@@ -25,15 +25,14 @@ import {
   detachSession,
   engineState,
   guestOf,
-  hideSession,
   openInSession,
   releaseToAgent,
   takeHumanControl,
   notePanelMounted,
   notePanelUnmounted,
   runInActive,
-  showSession,
   setEvidence,
+  setPaneState,
   setSessionRect,
   setStatus,
   setViewHooks,
@@ -106,20 +105,17 @@ function PanelChrome(props: PanelProps): React.ReactNode {
     // Always materialise the page on mount: a tab can be opened in the background,
     // and a guest is only created from a mounted pane. Visibility then decides
     // whether it is shown.
-    void showSession(tabKey, initialUrl, host).then(() => {
-      if (props.visible === false) {
-        hideSession(tabKey)
-        // A tab opened through the controller mounts hidden: front it so the kernel
-        // lays the pane out and the guest can attach at all.
-        focusStartapusTab(tabKey)
-        // `focus(tabId)` is not always available in the plugin context; clicking the
-        // tab in the strip is the gesture the kernel definitely handles.
-        window.setTimeout(() => {
-          if (props.visible !== true) activateOwnTab()
-        }, 400)
-      }
-    })
+    setPaneState(tabKey, { url: initialUrl, host, visible: props.visible !== false })
+    if (props.visible === false) {
+      // A tab opened through the controller mounts hidden: front it so the kernel
+      // lays the pane out and the guest can attach at all.
+      focusStartapusTab(tabKey)
+      window.setTimeout(() => {
+        if (props.visible !== true) activateOwnTab()
+      }, 400)
+    }
     const observer = new ResizeObserver(() => {
+      setPaneState(tabKey, { host: hostRef.current, visible: props.visible !== false })
       if (props.visible !== false) setSessionRect(tabKey, true)
     })
     observer.observe(host)
@@ -133,11 +129,11 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   }, [tabKey, initialUrl])
 
   useEffect(() => {
-    if (props.visible === true) {
-      void showSession(tabKey, initialUrl, hostRef.current)
-    } else if (props.visible === false) {
-      hideSession(tabKey)
-    }
+    setPaneState(tabKey, {
+      url: initialUrl,
+      host: hostRef.current,
+      visible: props.visible === true,
+    })
   }, [props.visible, tabKey, initialUrl])
 
   const togglePick = useCallback((): void => {

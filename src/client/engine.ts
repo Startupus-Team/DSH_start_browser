@@ -248,7 +248,9 @@ export function openInSession(tabId: string, rawUrl: string): { ok: boolean; rea
     return { ok: false, reason: normalized.reason, url: rawUrl }
   }
   const session = sessions.get(tabId)
-  const guest = session?.guest ?? activeGuest()
+  // Address bar is tab-scoped: falling back to another tab's guest navigated the
+  // wrong page and then claimed "гость этой вкладки не создан" for this one.
+  const guest = session?.guest ?? null
   if (session !== undefined && !session.ready) {
     // Calling loadURL before `dom-ready` throws inside Electron; remember it instead.
     session.pendingUrl = normalized.url
@@ -259,8 +261,19 @@ export function openInSession(tabId: string, rawUrl: string): { ok: boolean; rea
   }
   const hasLoadURL = typeof guest?.loadURL === 'function'
   if (guest === null || guest === undefined || !hasLoadURL) {
-    const reason = guest === null || guest === undefined ? 'гость этой вкладки не создан' : 'у гостя нет loadURL'
-    lastNavAttempt = { url: normalized.url, ok: false, reason, hasGuest: guest !== null && guest !== undefined, hasLoadURL, at: Date.now() }
+    // The guest is not there yet: record the target and let reconciliation build it.
+    requestedUrl.set(tabId, normalized.url)
+    const state = paneState.get(tabId)
+    if (state !== undefined) paneState.set(tabId, { ...state, url: normalized.url })
+    lastNavAttempt = { url: normalized.url, ok: true, reason: 'гость будет создан и откроет адрес', hasGuest: false, hasLoadURL: false, at: Date.now() }
+    notify()
+    setStatus(`создам гостя вкладки и открою ${normalized.url}`)
+    scheduleReconcile()
+    return { ok: true, reason: '', url: normalized.url }
+  }
+  if (false) {
+    const reason = ''
+    lastNavAttempt = { url: normalized.url, ok: false, reason, hasGuest: true, hasLoadURL, at: Date.now() }
     notify()
     setStatus(`навигация не удалась: ${reason}`)
     return { ok: false, reason, url: normalized.url }
@@ -302,6 +315,62 @@ export function setGuideFallback(run: () => boolean): void {
 /** Install the DOM fallback that activates an already mounted Startapus tab. */
 export function setActivateFallback(run: () => boolean): void {
   activateTabFallback = run
+}
+
+/** What each pane wants, as reported by the panel: url, host and visibility. */
+interface PaneState {
+  url: string
+  host: HTMLElement | null
+  visible: boolean
+}
+const paneState = new Map<string, PaneState>()
+/** Address typed before the guest existed: it wins over the pane's default URL. */
+const requestedUrl = new Map<string, string>()
+let reconciling = false
+let reconcileTimer: number | null = null
+
+/** The panel tells the engine what its pane currently is. */
+export function setPaneState(tabId: string, state: Partial<PaneState>): void {
+  const previous = paneState.get(tabId) ?? { url: START_URL, host: null, visible: false }
+  paneState.set(tabId, {
+    url: state.url ?? previous.url,
+    host: state.host ?? previous.host,
+    visible: state.visible ?? previous.visible,
+  })
+  scheduleReconcile()
+}
+
+function scheduleReconcile(): void {
+  window.setTimeout(() => {
+    void reconcile()
+  }, 0)
+}
+
+/**
+ * Reconcile desired pane state with reality: a visible pane must have a live
+ * guest, a hidden one must not acquire new guests. This replaces the old
+ * one-shot "create at mount" decision that left visible panes guestless.
+ */
+async function reconcile(): Promise<void> {
+  if (reconciling) return
+  reconciling = true
+  try {
+    for (const [tabId, state] of [...paneState.entries()]) {
+      const session = sessions.get(tabId)
+      if (!state.visible) {
+        if (session !== undefined) position(session, false)
+        continue
+      }
+      if (session !== undefined && session.guest !== null && session.container.isConnected) {
+        position(session, true)
+        continue
+      }
+      const url = state.url === '' ? START_URL : state.url
+      await showSession(tabId, url, state.host)
+    }
+  } finally {
+    reconciling = false
+  }
 }
 
 /** Try to front one of our tabs after a deferred creation. */
@@ -756,7 +825,6 @@ export async function showSession(tabId: string, initialUrl: string, host: HTMLE
       visible = hostVisible(host)
     }
     if (!visible) {
-      deferredCreate.set(tabId, { url: initialUrl, host })
       setStatus('вкладка скрыта: страница создастся, когда её покажут')
       notify()
       return
@@ -771,7 +839,9 @@ export async function showSession(tabId: string, initialUrl: string, host: HTMLE
     releaseLease(known)
     sessions.delete(tabId)
   }
-  const session = sessions.get(tabId) ?? (await ensureSession(tabId, initialUrl === '' ? START_URL : initialUrl, host))
+  const targetUrl = requestedUrl.get(tabId) ?? (initialUrl === '' ? START_URL : initialUrl)
+  const session = sessions.get(tabId) ?? (await ensureSession(tabId, targetUrl, host))
+  requestedUrl.delete(tabId)
   for (const other of sessions.values()) {
     if (other.tabId !== tabId) position(other, false)
   }

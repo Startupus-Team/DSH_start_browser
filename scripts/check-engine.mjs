@@ -370,8 +370,39 @@ await check('E17: серия падений останавливается (E_GU
   }
 })
 
+await check('E18: реконсиляция создаёт гостя только у видимой панели', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  const before = engine.engineState().counters.acquires
+  engine.setPaneState('pane1', { url: 'https://pane.example/', host, visible: false })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  expect(engine.engineState().counters.acquires === before, 'скрытая панель получила гостя')
+  engine.setPaneState('pane1', { visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  expect(engine.engineState().counters.acquires === before + 1, 'видимая панель не получила гостя')
+  const guest = engine.guestOf('pane1')
+  expect(guest !== null, 'гость не создан после показа')
+  guest.fire('dom-ready')
+  return 'скрыто → 0 acquire, показано → гость создан'
+})
+
+await check('E19: адресная строка ждёт создания гостя, а не падает', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  // The user types the address before the guest exists (pane is visible, guest is not).
+  const result = engine.openInSession('pane2', 'https://pane2.example/next')
+  engine.setPaneState('pane2', { url: 'https://pane2.example/', host, visible: true })
+  expect(result.ok === true, `openInSession: ${JSON.stringify(result)}`)
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  const guest = engine.guestOf('pane2')
+  expect(guest !== null, 'гость не создан по адресному вводу')
+  guest.fire('dom-ready')
+  expect(guest.loadedUrls.some((url) => url.includes('pane2.example/next')), `загружено: ${JSON.stringify(guest.loadedUrls)}`)
+  return 'адрес запомнен и открыт после создания гостя'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 17/17')
+console.log('ENGINE OK: 19/19')
