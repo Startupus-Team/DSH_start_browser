@@ -122,9 +122,27 @@ export function apply(ctx: ClientContext): void {
     // optional
   }
 
-  // The shortcut uses the same service the built-in tools use (`shortcuts.register`
-  // with resolve/run): that is what makes the command appear in Settings and puts
-  // its keys on the guide card. Cmd+T was freed by disabling the built-in browser.
+  // Working handler first: capture-phase keydown, ignored inside text inputs.
+  // Cmd+T was freed by disabling the built-in browser.
+  try {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const modifier = event.metaKey || event.ctrlKey
+      if (!modifier || event.altKey || event.shiftKey) return
+      if (event.key.toLowerCase() !== 't') return
+      const target = event.target as HTMLElement | null
+      const tag = target?.tagName?.toLowerCase() ?? ''
+      if (tag === 'input' || tag === 'textarea' || target?.isContentEditable === true) return
+      event.preventDefault()
+      requestOpenTab()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    ctx.effect(() => () => window.removeEventListener('keydown', onKeyDown, true), 'startapus-browser: shortcut listener')
+  } catch {
+    // must never break activation
+  }
+
+  // Best effort: also register the command in the shortcuts catalog so it is
+  // listed in Settings; the listener above is what actually opens the tab.
   try {
     ctx.inject(['shortcuts'], (scope: ClientContext) => {
       const shortcuts = (scope as unknown as {
@@ -210,7 +228,7 @@ export function apply(ctx: ClientContext): void {
       commandId: 'startapus-browser.new',
       order: 10,
       title: () => 'Startapus Browser',
-      description: () => 'Браузер в правой панели: произвольные сайты и выделение элементов',
+      description: () => '⌘T · браузер в правой панели: любые сайты, выделение элементов, агентские инструменты',
       icon: StartapusArtwork,
     }],
   }

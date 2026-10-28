@@ -57,6 +57,22 @@ for (const file of files) {
   }
 }
 
+// Shortcut wiring must not silently disappear again (it broke once when the
+// listener was replaced by a kernel registration that did not bind).
+const indexSource = readFileSync('src/client/index.tsx', 'utf8')
+const shortcutChecks = [
+  ['keydown listener', indexSource.includes("addEventListener('keydown'")],
+  ['обработчик Cmd+T', indexSource.includes("event.key.toLowerCase() !== 't'")],
+  ['открытие вкладки', indexSource.includes('requestOpenTab(')],
+  ['подсказка в карточке', indexSource.includes('⌘T')],
+]
+for (const [name, ok] of shortcutChecks) {
+  if (!ok) {
+    failed += 1
+    console.log(`FAIL  ярлык: нет «${name}» в src/client/index.tsx`)
+  }
+}
+
 if (failed > 0) {
   console.log(`IMPORTS FAILED: ${failed}`)
   process.exit(1)
