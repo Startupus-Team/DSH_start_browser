@@ -138,7 +138,7 @@ interface ReviewTask {
 type TaskState = 'new' | 'triaged' | 'in_progress' | 'fix_ready' | 'verifying' | 'verified' | 'reopened' | 'wontfix'
 
 interface Acceptance {
-  method: 'computed' | 'box' | 'text' | 'exists' | 'visible'
+  method: 'computed' | 'box' | 'text' | 'exists' | 'visible' | 'contrast' | 'no-hscroll' | 'in-viewport'
   property: string
   expected: string
   tolerance: number
@@ -1422,6 +1422,22 @@ function evaluateAcceptance(acceptance: Acceptance, observed: string): { pass: b
     const pass = actual === '1' || actual === 'true'
     return { pass, reason: pass ? 'элемент найден и видим' : `элемент не найден (${actual || 'нет'})` }
   }
+  if (acceptance.method === 'in-viewport') {
+    const pass = actual === '1'
+    return { pass, reason: pass ? 'элемент целиком в видимой области' : 'элемент выходит за видимую область или не виден' }
+  }
+  if (acceptance.method === 'contrast') {
+    const ratio = Number.parseFloat(actual)
+    const minimum = Number.parseFloat(expected === '' ? '4.5' : expected)
+    if (!Number.isFinite(ratio) || !Number.isFinite(minimum)) return { pass: false, reason: `контраст не измерен: «${actual}»` }
+    const pass = ratio >= minimum
+    return { pass, reason: pass ? `контраст ${ratio}:1 ≥ ${minimum}:1` : `контраст ${ratio}:1 < ${minimum}:1` }
+  }
+  if (acceptance.method === 'no-hscroll') {
+    const overflow = Number.parseFloat(actual)
+    const pass = Number.isFinite(overflow) && overflow <= acceptance.tolerance
+    return { pass, reason: pass ? 'горизонтального переполнения нет' : `горизонтальное переполнение ${actual} px` }
+  }
   if (acceptance.method === 'text') {
     const pass = actual === expected
     return { pass, reason: pass ? 'текст совпал' : `текст «${actual}» ≠ «${expected}»` }
@@ -2323,7 +2339,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       parameters: objectSchema({
         problem: { type: 'string', description: 'Что не так, словами пользователя' },
         fromArea: { type: 'boolean', description: 'Создать задачу по выделенной области, а не по элементу' },
-        method: { type: 'string', enum: ['computed', 'box', 'text', 'exists', 'visible'], description: 'Тип проверки' },
+        method: { type: 'string', enum: ['computed', 'box', 'text', 'exists', 'visible', 'contrast', 'no-hscroll', 'in-viewport'], description: 'Тип проверки: contrast — контраст текста к фону ≥ expected (по умолчанию 4.5); no-hscroll — горизонтальное переполнение ≤ tolerance px; in-viewport — элемент целиком в видимой области' },
         property: { type: 'string', description: 'Свойство для проверки, например gap' },
         expected: { type: 'string', description: 'Ожидаемое значение' },
         tolerance: { type: 'number', description: 'Допуск, по умолчанию 0' },
@@ -3085,6 +3101,28 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
   } catch (error) {
     commands.length = 0
     results.push({ name: 'P3-3: ui_screenshot diff', pass: false, detail: String(error) })
+  }
+
+  // Acceptance predicates for the layout checks.
+  try {
+    const verdict = (method: Acceptance['method'], observed: string, expected = '', tolerance = 0) =>
+      evaluateAcceptance({ method, property: '', expected, tolerance }, observed)
+    const checks: Array<[string, boolean, boolean]> = [
+      ['contrast 4.54 ≥ 4.5 (по умолчанию)', verdict('contrast', '4.54').pass, true],
+      ['contrast 3.90 < 4.5', verdict('contrast', '3.90').pass, false],
+      ['contrast 3.90 ≥ 3 (крупный текст)', verdict('contrast', '3.90', '3').pass, true],
+      ['contrast не измерен', verdict('contrast', 'E_UNMEASURABLE: фон').pass, false],
+      ['no-hscroll 0 при допуске 0', verdict('no-hscroll', '0').pass, true],
+      ['no-hscroll 120 > допуска 2', verdict('no-hscroll', '120', '0', 2).pass, false],
+      ['no-hscroll 1 ≤ допуска 2', verdict('no-hscroll', '1', '0', 2).pass, true],
+      ['in-viewport 1', verdict('in-viewport', '1').pass, true],
+      ['in-viewport 0', verdict('in-viewport', '0').pass, false],
+    ]
+    const wrong = checks.filter(([, got, want]) => got !== want).map(([name]) => name)
+    if (wrong.length > 0) throw new Error(`неверный вердикт: ${wrong.join('; ')}`)
+    results.push({ name: 'P3-4: вердикты contrast / no-hscroll / in-viewport', pass: true, detail: `${checks.length} случаев` })
+  } catch (error) {
+    results.push({ name: 'P3-4: вердикты contrast / no-hscroll / in-viewport', pass: false, detail: String(error) })
   }
 
   // Phase 2: typed failures carry a hint the agent can act on.

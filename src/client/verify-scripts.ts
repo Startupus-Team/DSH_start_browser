@@ -37,6 +37,51 @@ export function measureScript(selector: string, method: string, property: string
       } else if (method === 'box') {
         var rect = el.getBoundingClientRect();
         value = Math.round(rect.width) + 'x' + Math.round(rect.height);
+      } else if (method === 'no-hscroll') {
+        var scroller = (el === document.documentElement || el === document.body) ? document.documentElement : el;
+        value = String(Math.max(0, scroller.scrollWidth - scroller.clientWidth));
+      } else if (method === 'in-viewport') {
+        var vr = el.getBoundingClientRect();
+        value = (vr.width > 0 && vr.height > 0 && vr.left >= -0.5 && vr.top >= -0.5 && vr.right <= window.innerWidth + 0.5 && vr.bottom <= window.innerHeight + 0.5) ? '1' : '0';
+      } else if (method === 'contrast') {
+        var parseColor = function (text) {
+          var legacy = /^rgba?\\(([^)]+)\\)$/.exec(text);
+          if (legacy) {
+            var p = legacy[1].split(/[ ,\\/]+/).filter(Boolean).map(parseFloat);
+            return { r: p[0], g: p[1], b: p[2], a: p.length > 3 && !isNaN(p[3]) ? p[3] : 1 };
+          }
+          var modern = /^color\\(srgb ([^)]+)\\)$/.exec(text);
+          if (modern) {
+            var q = modern[1].split(/[ \\/]+/).filter(Boolean).map(parseFloat);
+            return { r: q[0] * 255, g: q[1] * 255, b: q[2] * 255, a: q.length > 3 && !isNaN(q[3]) ? q[3] : 1 };
+          }
+          return null;
+        };
+        var layers = [];
+        var unmeasurable = '';
+        for (var node = el; node && node.nodeType === 1; node = node.parentElement) {
+          var ncs = window.getComputedStyle(node);
+          if (ncs.backgroundImage && ncs.backgroundImage !== 'none') { unmeasurable = 'фон с изображением или градиентом'; break; }
+          var bg = parseColor(ncs.backgroundColor);
+          if (bg === null && ncs.backgroundColor && ncs.backgroundColor !== 'transparent') { unmeasurable = 'цвет фона в неподдерживаемом формате: ' + ncs.backgroundColor; break; }
+          if (bg !== null && bg.a > 0) { layers.push(bg); if (bg.a >= 1) break; }
+        }
+        var fgRaw = parseColor(cs.color);
+        if (unmeasurable === '' && fgRaw === null) unmeasurable = 'цвет текста в неподдерживаемом формате: ' + cs.color;
+        if (unmeasurable !== '') return JSON.stringify({ status: 'UNMEASURABLE', value: 'E_UNMEASURABLE: ' + unmeasurable });
+        var base = { r: 255, g: 255, b: 255 };
+        for (var li = layers.length - 1; li >= 0; li -= 1) {
+          var layer = layers[li];
+          base = { r: layer.r * layer.a + base.r * (1 - layer.a), g: layer.g * layer.a + base.g * (1 - layer.a), b: layer.b * layer.a + base.b * (1 - layer.a) };
+        }
+        var fg = { r: fgRaw.r * fgRaw.a + base.r * (1 - fgRaw.a), g: fgRaw.g * fgRaw.a + base.g * (1 - fgRaw.a), b: fgRaw.b * fgRaw.a + base.b * (1 - fgRaw.a) };
+        var lum = function (c) {
+          var f = function (v) { v = v / 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+          return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+        };
+        var l1 = lum(fg), l2 = lum(base);
+        var ratio = (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+        value = (Math.round(ratio * 100) / 100).toFixed(2);
       } else {
         value = cs.getPropertyValue(${prop}) || '';
       }

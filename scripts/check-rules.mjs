@@ -274,8 +274,49 @@ check('R13: diff скриншотов — доля, рамка и порог', (
   return '0 различий, патч 3×2 → 6%, шум <24 игнорируется, порог настраивается'
 })
 
+const styleOf = (color, background = 'rgba(0, 0, 0, 0)', image = 'none') => ({ color, backgroundColor: background, backgroundImage: image, display: 'block', visibility: 'visible', getPropertyValue: () => '' })
+const node = (style, parent = null, extra = {}) => ({ nodeType: 1, tagName: 'P', parentElement: parent, __style: style, getBoundingClientRect: () => ({ width: 10, height: 10, left: 0, top: 0, right: 10, bottom: 10 }), ...extra })
+const runMeasure = (method, el, doc = {}) => JSON.parse(vm.runInNewContext(scripts.measureScript('#t', method, '', ''), {
+  document: { querySelectorAll: () => [el], documentElement: doc.documentElement ?? { scrollWidth: 0, clientWidth: 0 }, body: doc.body ?? {} },
+  window: { getComputedStyle: (n) => n.__style, innerWidth: 400, innerHeight: 300 },
+}))
+
+check('R14: критерии приёмки — контраст, переполнение, область просмотра', () => {
+  const page = node(styleOf('rgb(0, 0, 0)', 'rgb(255, 255, 255)'))
+  const black = runMeasure('contrast', node(styleOf('rgb(0, 0, 0)'), page))
+  expect(black.status === 'OK' && black.value === '21.00', `чёрный на белом: ${JSON.stringify(black)}`)
+  const grey = runMeasure('contrast', node(styleOf('rgb(118, 118, 118)'), page))
+  expect(grey.value === '4.54', `#767676 на белом: ${JSON.stringify(grey)}`)
+  const bare = runMeasure('contrast', node(styleOf('rgb(0, 0, 0)')))
+  expect(bare.value === '21.00', `без фона = белый холст: ${JSON.stringify(bare)}`)
+  const half = runMeasure('contrast', node(styleOf('rgba(0, 0, 0, 0.5)'), page))
+  expect(Number(half.value) > 3.9 && Number(half.value) < 4.1, `полупрозрачный текст: ${JSON.stringify(half)}`)
+  const onDark = runMeasure('contrast', node(styleOf('rgb(255, 255, 255)'), node(styleOf('rgb(0,0,0)', 'rgb(17, 17, 17)'), page)))
+  expect(Number(onDark.value) > 17, `белый на тёмном: ${JSON.stringify(onDark)}`)
+  const photo = runMeasure('contrast', node(styleOf('rgb(0, 0, 0)', 'rgba(0, 0, 0, 0)', 'url(a.png)'), page))
+  expect(photo.status === 'UNMEASURABLE' && photo.value.startsWith('E_UNMEASURABLE'), `фон-картинка: ${JSON.stringify(photo)}`)
+  const modern = runMeasure('contrast', node(styleOf('oklch(0.5 0.1 200)'), page))
+  expect(modern.status === 'UNMEASURABLE', `oklch: ${JSON.stringify(modern)}`)
+  const srgb = runMeasure('contrast', node(styleOf('color(srgb 0 0 0)'), page))
+  expect(srgb.value === '21.00', `color(srgb): ${JSON.stringify(srgb)}`)
+
+  const wide = node(styleOf('rgb(0,0,0)'), null, { scrollWidth: 500, clientWidth: 400 })
+  expect(runMeasure('no-hscroll', wide).value === '100', 'переполнение элемента')
+  expect(runMeasure('no-hscroll', node(styleOf('rgb(0,0,0)'), null, { scrollWidth: 300, clientWidth: 400 })).value === '0', 'нет переполнения')
+  const root = node(styleOf('rgb(0,0,0)'), null, { scrollWidth: 520, clientWidth: 400 })
+  expect(runMeasure('no-hscroll', root, { documentElement: root }).value === '120', 'переполнение страницы (html)')
+
+  const inside = node(styleOf('rgb(0,0,0)'), null, { getBoundingClientRect: () => ({ width: 50, height: 20, left: 10, top: 10, right: 60, bottom: 30 }) })
+  const clipped = node(styleOf('rgb(0,0,0)'), null, { getBoundingClientRect: () => ({ width: 50, height: 20, left: 380, top: 10, right: 430, bottom: 30 }) })
+  const below = node(styleOf('rgb(0,0,0)'), null, { getBoundingClientRect: () => ({ width: 50, height: 20, left: 10, top: 290, right: 60, bottom: 310 }) })
+  expect(runMeasure('in-viewport', inside).value === '1', 'внутри')
+  expect(runMeasure('in-viewport', clipped).value === '0', 'обрезан справа')
+  expect(runMeasure('in-viewport', below).value === '0', 'ниже экрана')
+  return 'контраст 21.00 / 4.54 / альфа / фон-картинка → UNMEASURABLE; переполнение; in-viewport'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 13/13')
+console.log('RULES OK: 14/14')
