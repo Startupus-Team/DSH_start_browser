@@ -7,10 +7,14 @@
  * additionalProperties left open, duplicate names, empty descriptions, and
  * misplaced parameters (e.g. `reload` landing on the wrong tool).
  */
-import { toolSurface } from '../lib/index.js'
+import { exposedToolSurface, toolSurface } from '../lib/index.js'
 
-const tools = toolSurface()
+// The full set (original names) and what the agent actually sees (consolidated).
+const fullTools = toolSurface()
+const tools = [...fullTools, ...exposedToolSurface().filter((tool) => !fullTools.some((row) => row.name === tool.name && row.description === tool.description))]
+const exposed = exposedToolSurface()
 const problems = []
+const expectLater = (check, message) => { if (!check()) problems.push(message) }
 const rows = []
 
 for (const tool of tools) {
@@ -55,14 +59,21 @@ for (const tool of tools) {
   for (const issue of issues) problems.push(`${name}: ${issue}`)
 }
 
-const seen = new Set()
-for (const row of rows) {
-  if (seen.has(row.name)) problems.push(`дубликат инструмента: ${row.name}`)
-  seen.add(row.name)
+for (const [label, surface] of [['full', fullTools], ['exposed', exposed]]) {
+  const seen = new Set()
+  for (const tool of surface) {
+    if (seen.has(tool.name)) problems.push(`дубликат инструмента (${label}): ${tool.name}`)
+    seen.add(tool.name)
+  }
 }
+const exposedNames = new Set(exposed.map((tool) => String(tool.name)))
+expectLater(() => exposed.length <= 24, `агенту видно ${exposed.length} инструментов, ожидалось ≤24`)
+expectLater(() => ['ui_tab', 'ui_status', 'ui_open', 'ui_pick', 'ui_evidence', 'task_create', 'task_list', 'task_update'].every((name) => exposedNames.has(name)), 'нет консолидированного инструмента')
+expectLater(() => ['ui_tabs', 'ui_new_tab', 'ui_close_tab', 'ui_focus_tab', 'ui_activate_tab', 'ui_measure', 'ui_guest_state', 'ui_navigate', 'ui_pick_area', 'ui_area', 'task_batch', 'task_claim', 'task_get', 'ui_template', 'ui_export'].every((name) => !exposedNames.has(name)), 'старое имя осталось в поверхности агента')
+expectLater(() => exposedToolSurface(true).length === fullTools.length, 'legacyToolNames не возвращает полный набор')
 
 // Contract expectations that regressions already violated once.
-const byName = new Map(tools.map((tool) => [String(tool.name), tool]))
+const byName = new Map(fullTools.map((tool) => [String(tool.name), tool]))
 const expect = (condition, message) => { if (!condition) problems.push(message) }
 expect(byName.get('ui_verify')?.parameters?.properties?.reload !== undefined, 'ui_verify: нет параметра reload (перезагрузка перед замером)')
 expect(byName.get('task_create')?.parameters?.properties?.reload === undefined, 'task_create: reload попал не в тот инструмент')
@@ -80,4 +91,4 @@ if (problems.length > 0) {
   console.log(`TOOLS FAILED: ${problems.length}`)
   process.exit(1)
 }
-console.log(`TOOLS OK: ${tools.length}`)
+console.log(`TOOLS OK: ${fullTools.length} полных, ${exposed.length} видно агенту`)

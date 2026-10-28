@@ -259,8 +259,9 @@ export function setStatus(next: string): void {
  * Navigate one session from the pane's address bar.
  * Never silent: the outcome (and why) is stored for `health.lastNavAttempt`.
  */
-export function openInSession(tabId: string, rawUrl: string): { ok: boolean; reason: string; url: string } {
-  const normalized = normalizeAddress(rawUrl)
+/** `fromPerson`: typed in the address bar, so localhost and LAN addresses are allowed (the agent's path blocks them). */
+export function openInSession(tabId: string, rawUrl: string, fromPerson = false): { ok: boolean; reason: string; url: string } {
+  const normalized = normalizeAddress(rawUrl, { allowPrivate: fromPerson })
   if (!normalized.ok) {
     lastNavAttempt = { url: rawUrl, ok: false, reason: normalized.reason, hasGuest: false, hasLoadURL: false, at: Date.now() }
     notify()

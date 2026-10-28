@@ -15,11 +15,25 @@ export type AddressResult =
 
 const PRIVATE_HOST = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/
 
-/** Turn what the user typed into a safe http(s) URL. */
-export function normalizeAddress(raw: string): AddressResult {
+/** Schemes that are recognised (and refused) even without `//`, so `host:port` is not mistaken for one. */
+const NAMED_SCHEME = /^(javascript|data|file|about|mailto|blob|view-source|chrome|chrome-extension|ftp|ws|wss|tel|sms):/i
+
+/** Hosts a person types for local development: they get plain http by default (dev servers rarely have TLS). */
+const LOCAL_DEV_HOST = /^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|\[::1\])/i
+
+/**
+ * Turn what was typed into a safe http(s) URL.
+ *
+ * `allowPrivate` is for the person typing in the address bar: localhost and LAN
+ * addresses are what they develop against. The agent's tools keep the default
+ * (blocked), which is the SSRF guard.
+ */
+export function normalizeAddress(raw: string, options: { allowPrivate?: boolean } = {}): AddressResult {
   const value = (raw ?? '').trim()
   if (value === '') return { ok: false, reason: 'пустой адрес' }
-  const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`
+  const hasScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) || NAMED_SCHEME.test(value)
+  const defaultScheme = LOCAL_DEV_HOST.test(value) ? 'http' : 'https'
+  const withScheme = hasScheme ? value : `${defaultScheme}://${value}`
   let parsed: URL
   try {
     parsed = new URL(withScheme)
@@ -29,7 +43,7 @@ export function normalizeAddress(raw: string): AddressResult {
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     return { ok: false, reason: 'разрешены только http(s)' }
   }
-  if (PRIVATE_HOST.test(parsed.hostname)) {
+  if (options.allowPrivate !== true && PRIVATE_HOST.test(parsed.hostname)) {
     return { ok: false, reason: 'приватные адреса заблокированы' }
   }
   return { ok: true, url: parsed.toString() }

@@ -53,6 +53,8 @@ export interface Config {
   startUrl?: string
   /** Whether arbitrary http(s) sites are allowed (default true). */
   allowArbitrarySites?: boolean
+  /** Also register the 35 original single-purpose tool names (default false: the consolidated surface). */
+  legacyToolNames?: boolean
 }
 
 /** One queued renderer command. */
@@ -2643,6 +2645,174 @@ export function toolSurface(): Array<Record<string, unknown>> {
   })
 }
 
+/** Legacy tools folded into a consolidated one: hidden from the agent unless `legacyToolNames` is on. */
+const FOLDED_TOOLS = new Set([
+  'ui_tabs', 'ui_new_tab', 'ui_close_tab', 'ui_focus_tab', 'ui_activate_tab',
+  'ui_measure', 'ui_guest_state', 'ui_navigate', 'ui_pick_area', 'ui_area',
+  'task_batch', 'task_claim', 'task_get', 'ui_template', 'ui_export',
+])
+
+type SurfaceTool = Record<string, unknown> & { name: string; execute: (args: Record<string, unknown>, exec?: unknown) => Promise<{ text: string }> }
+
+const compositeSchema = (properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> => ({
+  type: 'object',
+  additionalProperties: false,
+  properties,
+  required,
+})
+
+/** Parse the JSON text a wrapped tool returns. */
+function parseText(result: { text: string }): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(result.text) as unknown
+    return typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : { value: parsed }
+  } catch {
+    return { text: result.text }
+  }
+}
+
+/**
+ * The surface the agent sees: 35 single-purpose tools folded into 21. Every
+ * consolidated tool delegates to the original, so rate limits, gates and
+ * errors are unchanged; the originals stay reachable with `legacyToolNames`.
+ */
+export function exposedToolSurface(legacyNames = false): Array<Record<string, unknown>> {
+  const full = toolSurface() as SurfaceTool[]
+  if (legacyNames) return full
+  const byName = new Map(full.map((tool) => [tool.name, tool]))
+  const use = (name: string): SurfaceTool => {
+    const found = byName.get(name)
+    if (found === undefined) throw new Error(`E_INTERNAL: нет инструмента ${name}`)
+    return found
+  }
+  const delegate = (name: string, args: Record<string, unknown>, exec?: unknown): Promise<{ text: string }> => use(name).execute(args, exec)
+  const tabIdProp = { type: 'string', description: 'Ключ вкладки из ui_tab {action:list} (по умолчанию активная)' }
+
+  const composites: SurfaceTool[] = [
+    {
+      name: 'ui_tab',
+      description: 'Вкладки Startapus: list — список сессий; new — открыть (url необязателен); close — закрыть вкладку (через ядро) по tabId или активную; focus — вывести вкладку на передний план (tabId обязателен); activate — активировать вкладку со скрытой панелью.',
+      parameters: compositeSchema({
+        action: { type: 'string', enum: ['list', 'new', 'close', 'focus', 'activate'], description: 'Операция над вкладками' },
+        url: { type: 'string', description: 'Для new: http(s) адрес' },
+        tabId: tabIdProp,
+      }, ['action']),
+      output: TEXT_OUTPUT,
+      execute: (args, exec) => {
+        const action = String(args.action ?? '')
+        const tabId = typeof args.tabId === 'string' && args.tabId !== '' ? { tabId: args.tabId } : {}
+        if (action === 'list') return delegate('ui_tabs', {}, exec)
+        if (action === 'new') return delegate('ui_new_tab', typeof args.url === 'string' && args.url !== '' ? { url: args.url } : {}, exec)
+        if (action === 'close') return delegate('ui_close_tab', tabId, exec)
+        if (action === 'focus') return delegate('ui_focus_tab', tabId, exec)
+        if (action === 'activate') return delegate('ui_activate_tab', {}, exec)
+        throw new Error('E_NO_EFFECT: action должен быть list, new, close, focus или activate')
+      },
+    },
+    {
+      name: 'ui_status',
+      description: use('ui_status').description as string + ' С guest:true добавляет диагностику гостя вкладки (адрес, title, readyState, длина текста).',
+      parameters: compositeSchema({
+        guest: { type: 'boolean', description: 'Добавить диагностику гостя (бывший ui_guest_state)' },
+        tabId: tabIdProp,
+      }),
+      output: TEXT_OUTPUT,
+      execute: async (args, exec) => {
+        const status = parseText(await delegate('ui_status', {}, exec))
+        if (args.guest !== true) return { text: JSON.stringify(status, null, 1) }
+        const guest = parseText(await delegate('ui_guest_state', typeof args.tabId === 'string' && args.tabId !== '' ? { tabId: args.tabId } : {}, exec))
+        return { text: JSON.stringify({ ...status, guest }, null, 1) }
+      },
+    },
+    {
+      name: 'ui_open',
+      description: 'Открыть http(s) страницу (url) либо пройти по истории вкладки (history: back | forward | reload). Только http/https, без учётных данных в URL; первый переход на новый домен требует confirmOrigin: true.',
+      parameters: compositeSchema({
+        url: { type: 'string', description: 'Адрес страницы' },
+        confirmOrigin: { type: 'boolean', description: 'Подтвердить первый переход на новый домен' },
+        history: { type: 'string', enum: ['back', 'forward', 'reload'], description: 'Шаг по истории вместо перехода по адресу' },
+        tabId: tabIdProp,
+      }),
+      output: TEXT_OUTPUT,
+      execute: (args, exec) => {
+        if (typeof args.history === 'string' && args.history !== '') {
+          if (typeof args.url === 'string' && args.url !== '') throw new Error('E_NO_EFFECT: укажите либо url, либо history')
+          return delegate('ui_navigate', { action: args.history, ...(typeof args.tabId === 'string' && args.tabId !== '' ? { tabId: args.tabId } : {}) }, exec)
+        }
+        if (typeof args.url !== 'string' || args.url === '') throw new Error('E_NO_EFFECT: нужен url или history')
+        return delegate('ui_open', { url: args.url, ...(args.confirmOrigin === true ? { confirmOrigin: true } : {}) }, exec)
+      },
+    },
+    {
+      name: 'ui_pick',
+      description: 'Попросить человека выбрать на странице элемент (mode: element, по умолчанию) или выделить рамкой область (mode: area). Пока человек не кликнул, результата нет; для автономной работы используйте ui_select.',
+      parameters: compositeSchema({
+        mode: { type: 'string', enum: ['element', 'area'], description: 'element — клик по элементу; area — рамка' },
+      }),
+      output: TEXT_OUTPUT,
+      execute: (args, exec) => delegate(args.mode === 'area' ? 'ui_pick_area' : 'ui_pick', {}, exec),
+    },
+    {
+      name: 'ui_evidence',
+      description: 'Портрет последнего выбранного элемента (селектор, a11y, геометрия, computed-стили, консоль) или, с area:true, последней выделенной области (прямоугольник, покрытые элементы, среда страницы).',
+      parameters: compositeSchema({
+        area: { type: 'boolean', description: 'Вернуть последнюю выделенную область вместо элемента' },
+      }),
+      output: TEXT_OUTPUT,
+      execute: (args, exec) => delegate(args.area === true ? 'ui_area' : 'ui_evidence', {}, exec),
+    },
+    {
+      name: 'task_create',
+      description: use('task_create').description as string + ' Со списком items (до 20) создаёт пакет задач — пакетный аудит области.',
+      parameters: {
+        ...(use('task_create').parameters as Record<string, unknown>),
+        properties: {
+          ...((use('task_create').parameters as { properties: Record<string, unknown> }).properties),
+          items: { type: 'array', description: 'Пакет задач: [{problem, method, property, expected, tolerance}]; взаимоисключает одиночные поля', items: { type: 'object', additionalProperties: true } },
+        },
+      },
+      output: TEXT_OUTPUT,
+      execute: (args, exec) => (Array.isArray(args.items) ? delegate('task_batch', { items: args.items }, exec) : delegate('task_create', args, exec)),
+    },
+    {
+      name: 'task_list',
+      description: 'Список задач ревью, новые сверху; с id — одна задача целиком (критерий приёмки, состояние, попытки, evidence).',
+      parameters: compositeSchema({
+        id: { type: 'string', description: 'Идентификатор задачи: вернуть только её' },
+        state: { type: 'string', description: 'Фильтр по состоянию' },
+        limit: { type: 'number', description: 'Сколько вернуть, по умолчанию 20' },
+      }),
+      output: TEXT_OUTPUT,
+      execute: (args, exec) => (typeof args.id === 'string' && args.id !== '' ? delegate('task_get', { id: args.id }, exec) : delegate('task_list', args, exec)),
+    },
+    {
+      name: 'task_update',
+      description: use('task_update').description as string + ' С owner (без state) берёт задачу в работу (WIP-лимит 5).',
+      parameters: compositeSchema({
+        id: { type: 'string', description: 'Идентификатор задачи' },
+        state: { type: 'string', description: 'Новое состояние (не нужно, если только берёте задачу через owner)' },
+        note: { type: 'string', description: 'Комментарий' },
+        owner: { type: 'string', description: 'Взять задачу в работу от имени owner (по умолчанию agent при claim:true)' },
+        claim: { type: 'boolean', description: 'Взять задачу в работу (как owner=agent)' },
+      }, ['id']),
+      output: TEXT_OUTPUT,
+      execute: async (args, exec) => {
+        const wantsClaim = typeof args.owner === 'string' || args.claim === true
+        if (wantsClaim) {
+          const claimed = await delegate('task_claim', { id: args.id, owner: typeof args.owner === 'string' && args.owner !== '' ? args.owner : 'agent' }, exec)
+          if (typeof args.state !== 'string' || args.state === '') return claimed
+        }
+        if (typeof args.state !== 'string' || args.state === '') throw new Error('E_NO_EFFECT: нужен state или owner/claim')
+        return delegate('task_update', { id: args.id, state: args.state, ...(typeof args.note === 'string' ? { note: args.note } : {}) }, exec)
+      },
+    },
+  ]
+
+  const replaced = new Set(composites.map((tool) => tool.name))
+  const kept = full.filter((tool) => !FOLDED_TOOLS.has(tool.name) && !replaced.has(tool.name))
+  return [...kept, ...composites]
+}
+
 /**
  * Soak harness (AC-7): rate limiting, bounded command queue, bounded task store
  * and the panic path — the parts that degrade silently under load.
@@ -3440,6 +3610,72 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'P3-8: read_page root/filter, find refresh, drag/click_at', pass: false, detail: String(error) })
   }
 
+  // The consolidated surface delegates to the original tools without changing their gates.
+  try {
+    seedTransport()
+    commands.length = 0
+    const exposed = exposedToolSurface() as Array<{ name: string; execute: (args: Record<string, unknown>) => Promise<{ text: string }> }>
+    const names = new Set(exposed.map((row) => row.name))
+    for (const gone of ['ui_tabs', 'ui_new_tab', 'ui_close_tab', 'ui_focus_tab', 'ui_activate_tab', 'ui_measure', 'ui_guest_state', 'ui_navigate', 'ui_pick_area', 'ui_area', 'task_batch', 'task_claim', 'task_get', 'ui_template', 'ui_export']) {
+      if (names.has(gone)) throw new Error(`${gone} остался в поверхности агента`)
+    }
+    if (exposed.length > 24) throw new Error(`агенту видно ${exposed.length} инструментов`)
+    const run = (name: string, args: Record<string, unknown>): Promise<{ text: string }> => {
+      const found = exposed.find((row) => row.name === name)
+      if (found === undefined) throw new Error(`нет ${name}`)
+      return found.execute(args)
+    }
+    const lastKind = (): string | undefined => commands[commands.length - 1]?.kind
+    await run('ui_tab', { action: 'new', url: 'https://tab.test/' })
+    if (lastKind() !== 'new_tab' || commands[commands.length - 1].args.url !== 'https://tab.test/') throw new Error('ui_tab new')
+    await run('ui_tab', { action: 'close', tabId: 'tab-q' })
+    if (lastKind() !== 'close_tab' || commands[commands.length - 1].args.tabId !== 'tab-q') throw new Error('ui_tab close')
+    await run('ui_tab', { action: 'focus', tabId: 'tab-q' })
+    if (lastKind() !== 'focus_tab') throw new Error('ui_tab focus')
+    await rejects('E_NO_EFFECT', () => run('ui_tab', { action: 'focus' }))
+    await rejects('E_NO_EFFECT', () => run('ui_tab', { action: 'teleport' }))
+    await run('ui_tab', { action: 'list' })
+    await run('ui_pick', { mode: 'area' })
+    if (lastKind() !== 'pick_area') throw new Error('ui_pick area')
+    await run('ui_pick', {})
+    if (lastKind() !== 'pick') throw new Error('ui_pick element')
+    commands.length = 0
+
+    const navigating = run('ui_open', { history: 'back' })
+    if (lastKind() !== 'navigate') throw new Error('ui_open history')
+    await handleRoute(fakeRequest({ navResult: { ok: true, url: 'https://x.test/', reason: '', at: Date.now() } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    await navigating
+    await rejects('E_NO_EFFECT', () => run('ui_open', { url: 'https://x.test/', history: 'back' }))
+    await rejects('E_NO_EFFECT', () => run('ui_open', {}))
+    commands.length = 0
+
+    // Without a selected area the original ui_area refuses; the consolidated tool must say the same.
+    const savedArea = client.area
+    client.area = null
+    await rejects('E_NO_PICK', () => run('ui_evidence', { area: true }))
+    client.area = savedArea
+    const status = JSON.parse((await run('ui_status', {})).text) as Record<string, unknown>
+    if (status.stage === undefined) throw new Error('ui_status потерял поля')
+
+    const created = JSON.parse((await run('task_create', { items: [
+      { problem: 'composite: a', method: 'computed', property: 'gap', expected: '8px' },
+      { problem: 'composite: b', method: 'computed', property: 'gap', expected: '8px' },
+    ] })).text) as { data?: unknown; created?: unknown }
+    if (JSON.stringify(created).indexOf('task-') < 0) throw new Error(`пакет задач не создан: ${JSON.stringify(created).slice(0, 160)}`)
+    const listed = JSON.parse((await run('task_list', {})).text) as { tasks?: Array<{ id: string; problem: string }> } & Record<string, unknown>
+    const mine = JSON.stringify(listed).includes('composite: a')
+    if (!mine) throw new Error('task_list не видит созданные задачи')
+    const id = String((JSON.stringify(listed).match(/task-\d+/) ?? [''])[0])
+    const one = JSON.parse((await run('task_list', { id })).text) as Record<string, unknown>
+    if (JSON.stringify(one).indexOf(id) < 0) throw new Error('task_list {id} не вернул задачу')
+    for (const row of tasks.keys()) if (String(tasks.get(row)?.problem ?? '').startsWith('composite:')) tasks.delete(row)
+    await rejects('E_NO_EFFECT', () => run('task_update', { id: 'task-0' }))
+    results.push({ name: 'P4-1: консолидированная поверхность инструментов', pass: true, detail: `${exposed.length} инструментов вместо 35; ui_tab/ui_open/ui_pick/ui_evidence/task_* делегируют оригиналам` })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P4-1: консолидированная поверхность инструментов', pass: false, detail: String(error) })
+  }
+
   // ui_navigate and the extended ui_act operations.
   try {
     seedTransport()
@@ -3922,7 +4158,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const tools = buildTools()
   let registered = 0
-  for (const tool of toolSurface()) {
+  for (const tool of exposedToolSurface(config.legacyToolNames === true)) {
     try {
       ctx.effect(() => ctx.tools.register(tool as never), `startapus-browser: tool ${String(tool.name)}`)
       registered += 1

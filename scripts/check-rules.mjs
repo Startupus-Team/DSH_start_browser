@@ -570,8 +570,26 @@ check('R23: ui_read_page — корень и фильтр', () => {
   return 'heading только при filter=all; root найден/не найден'
 })
 
+check('R24: адресная строка — localhost, host:port и схемы', () => {
+  const person = (raw) => rules.normalizeAddress(raw, { allowPrivate: true })
+  expect(person('localhost:3000').url === 'http://localhost:3000/', `localhost:3000 → ${JSON.stringify(person('localhost:3000'))}`)
+  expect(person('127.0.0.1:5173/app').url === 'http://127.0.0.1:5173/app', 'IP с портом')
+  expect(person('192.168.1.5:8080').url === 'http://192.168.1.5:8080/', 'LAN-адрес')
+  expect(person('http://localhost').ok === true, 'явный http://localhost')
+  expect(person('example.com:8080').url === 'https://example.com:8080/', 'host:port → https')
+  expect(person('ya.ru').url === 'https://ya.ru/', 'обычный адрес без схемы')
+  for (const raw of ['file:///etc/hosts', 'javascript:alert(1)', 'data:text/html,x', 'about:blank', 'view-source:https://a.b', 'ftp://x.y', 'chrome://settings']) {
+    expect(person(raw).ok === false, `${raw} принят для человека`)
+  }
+  // The agent keeps the SSRF guard, including bare localhost:port.
+  expect(rules.normalizeAddress('localhost:3000').ok === false, 'агенту открыт localhost')
+  expect(rules.normalizeAddress('http://192.168.1.5/').ok === false, 'агенту открыт LAN')
+  expect(rules.normalizeAddress('example.com:8080').url === 'https://example.com:8080/', 'host:port агенту')
+  return 'человек: localhost/LAN/host:port открываются; опасные схемы закрыты; агент по-прежнему не ходит во внутреннюю сеть'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 23/23')
+console.log('RULES OK: 24/24')

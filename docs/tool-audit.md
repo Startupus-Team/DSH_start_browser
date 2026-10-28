@@ -1,6 +1,6 @@
 # Аудит инструментов startapus-browser (28.10)
 
-Сборка: `rev 90b45cb843fc`. Регистрация: **35 инструментов**, все с `output { schema, render }`,
+Сборка: `rev 90b45cb843fc`. Регистрация: **35 исходных инструментов; агенту видно 21** (см. README, раздел «Инструменты агента»), все с `output { schema, render }`,
 `additionalProperties: false`, объявленными `required`; проверяется `scripts/check-tools.mjs`
 (входит в `npm run selftest`).
 

@@ -224,7 +224,7 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   }, [togglePick, props])
 
   const navigate = useCallback((next: string): void => {
-    const result = openInSession(tabKey, next)
+    const result = openInSession(tabKey, next, true)
     if (!result.ok) setStatus(`адрес: ${result.reason}`)
   }, [tabKey])
 

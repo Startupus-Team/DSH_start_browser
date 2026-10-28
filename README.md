@@ -147,18 +147,27 @@ cd ~/.dsh/profiles/desktop && pnpm install
 
 ## Инструменты агента
 
-Host-половина регистрирует 35 инструментов (`ctx.tools.register`, каждый с обязательным `output { schema, render }`;
-полный список и покрытие тестами — `docs/tool-audit.md`):
+Агенту видно **21 инструмент**: 35 исходных свёрнуты в консолидированные (`ctx.tools.register`, каждый с обязательным
+`output { schema, render }`). Исходные имена по-прежнему доступны, если включить в конфиге `legacyToolNames: true`;
+свёрнутые инструменты делегируют оригиналам, поэтому лимиты, гейты и ошибки те же. Покрытие тестами — `docs/tool-audit.md`.
 
-| Группа | Инструменты |
-|---|---|
-| Состояние и вкладки | `ui_status`, `ui_tabs`, `ui_new_tab`, `ui_close_tab`, `ui_focus_tab`, `ui_activate_tab`, `ui_guest_state` |
-| Навигация | `ui_open`, `ui_navigate` (back/forward/reload), `ui_viewport` (zoom, ширина, пресеты, `colorScheme` dark/light/auto) |
-| Чтение страницы | `ui_read_page`, `ui_find`, `ui_page_text`, `ui_console`, `ui_network` (ресурсы + статусы fetch/XHR), `ui_inspect`, `ui_measure`, `ui_screenshot` (`wait` — вернуть `path` для штатного `read_image`; `diff` — сравнение с прошлым снимком) |
-| Действия и ожидание | `ui_act` (click/type/scroll/press с комбинациями/hover/select/check/drag/click_at, `ref`, пакет до 10), `ui_wait` (селектор/текст/сеть), `ui_js` (диагностика) |
-| Выбор элемента | `ui_pick`, `ui_pick_area`, `ui_select`, `ui_area`, `ui_evidence` |
-| Приёмка | `ui_verify` (**только он ставит `verified`**), `ui_template`, `ui_export`; критерии `computed`, `box`, `text`, `exists`, `visible`, `contrast`, `no-hscroll`, `in-viewport` |
-| Очередь задач | `task_create`, `task_batch`, `task_claim`, `task_list`, `task_get`, `task_update` (`E_NO_ACCEPTANCE` на `triaged` без критерия, `E_FORBIDDEN` на `verified`) |
+| Инструмент | Что делает | Заменяет |
+|---|---|---|
+| `ui_tab { action }` | list / new / close / focus / activate вкладок | `ui_tabs`, `ui_new_tab`, `ui_close_tab`, `ui_focus_tab`, `ui_activate_tab` |
+| `ui_status { guest? }` | состояние панели; с `guest:true` ещё и диагностика гостя | `ui_guest_state` |
+| `ui_open { url \| history }` | переход по адресу или back / forward / reload | `ui_navigate` |
+| `ui_pick { mode }` | выбор элемента или области человеком | `ui_pick_area` |
+| `ui_evidence { area? }` | портрет выбранного элемента или области | `ui_area` |
+| `task_create { …\| items }` | задача или пакет до 20 | `task_batch` |
+| `task_list { id? }` | список или одна задача | `task_get` |
+| `task_update { id, state \| owner }` | смена состояния или «взять в работу» | `task_claim` |
+| `ui_inspect` | замер стилей и геометрии элемента | `ui_measure` |
+
+Остальные инструменты без изменений: `ui_viewport` (zoom, ширина, пресеты, `colorScheme`), `ui_read_page`, `ui_find`,
+`ui_page_text`, `ui_console`, `ui_network`, `ui_screenshot` (`wait`, `diff`), `ui_select`, `ui_act` (click/type/scroll/press с
+комбинациями/hover/select/check/drag/click_at, `ref`, пакет до 10), `ui_wait`, `ui_js`, `ui_verify` (**только он ставит
+`verified`**; критерии `computed`, `box`, `text`, `exists`, `visible`, `contrast`, `no-hscroll`, `in-viewport`).
+Убраны из видимого набора как малоиспользуемые: `ui_template`, `ui_export` (доступны через `legacyToolNames`).
 
 ## Канал host ↔ renderer
 
@@ -172,7 +181,7 @@ Host-половина регистрирует 35 инструментов (`ctx
 ## Проверки
 
 ```bash
-npm run selftest     # офлайн: гейты, компаратор, verify-движок, soak, area, page-скрипты — 66 проверок
+npm run selftest     # офлайн: гейты, компаратор, verify-движок, soak, area, page-скрипты — 67 проверок
 npm run live         # живой процесс: сверка capabilities, transport, selftest на госте
 ```
 
