@@ -378,6 +378,13 @@ async function reconcile(): Promise<void> {
       }
       if (session !== undefined && session.guest !== null && session.container.isConnected) {
         position(session, true)
+        if (activeTabId !== tabId) {
+          // Fronting an existing tab must also move the engine's active pointer,
+          // otherwise tools keep reporting the previously active URL.
+          activeTabId = tabId
+          session.lastActiveAt = Date.now()
+          notify()
+        }
         continue
       }
       const url = state.url === '' ? START_URL : state.url
