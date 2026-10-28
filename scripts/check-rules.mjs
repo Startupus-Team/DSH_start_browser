@@ -357,7 +357,7 @@ const baseEl = () => ({ scrollIntoView() {}, focus() {}, click() { this.clicked 
 check('R17: ui_act — hover, select, check', () => {
   const hover = runAct('hover', '#h', '', baseEl())
   expect(hover.result.status === 'OK', JSON.stringify(hover.result))
-  expect(['mouseover', 'mouseenter', 'mousemove'].every((name) => hover.events.includes(name)), `события hover: ${hover.events}`)
+  expect(['pointerover', 'pointerenter', 'pointermove', 'mouseover', 'mouseenter', 'mousemove'].every((name) => hover.events.includes(name)), `события hover: ${hover.events}`)
   expect(runAct('hover', '#h', '', null).result.status === 'MISSING', 'hover без элемента')
 
   const options = [{ value: 'a', text: ' Alpha ' }, { value: 'b', text: 'Beta' }, { value: 'c', text: 'Gamma', disabled: true }]
@@ -365,6 +365,10 @@ check('R17: ui_act — hover, select, check', () => {
   const byValue = pick('b')
   expect(byValue.result.status === 'OK' && byValue.result.value === 'b' && byValue.events.includes('change'), JSON.stringify(byValue))
   expect(pick('Alpha').result.value === 'a', 'выбор по тексту (с обрезкой пробелов)')
+  const multi = { ...baseEl(), options: options.map((o) => ({ ...o, selected: false })), multiple: true, selectedIndex: -1, get value() { return '' } }
+  runAct('select', '#m', 'a', multi)
+  runAct('select', '#m', 'b', multi)
+  expect(multi.options[0].selected && multi.options[1].selected, 'multiple: оба варианта должны остаться выбранными')
   const missing = pick('zzz')
   expect(missing.result.status === 'ERROR' && missing.result.message.includes('a=Alpha'), JSON.stringify(missing.result))
   expect(pick('c').result.message === 'вариант отключён', 'отключённый вариант')
@@ -399,7 +403,7 @@ const hookWorld = async () => {
   }
   const context = {
     performance: { now: () => 1000, getEntriesByType: () => [] },
-    fetch: (input) => (String(input).includes('boom') ? Promise.reject(new Error('Failed to fetch')) : Promise.resolve({ status: String(input).includes('missing') ? 404 : 200, ok: !String(input).includes('missing') })),
+    fetch: (input) => (String(input).includes('abort') ? Promise.reject(Object.assign(new Error('aborted'), { name: 'AbortError' })) : String(input).includes('boom') ? Promise.reject(new Error('Failed to fetch')) : Promise.resolve({ status: String(input).includes('missing') ? 404 : 200, ok: !String(input).includes('missing') })),
     XMLHttpRequest: FakeXhr,
   }
   context.window = context
@@ -408,6 +412,7 @@ const hookWorld = async () => {
   await context.fetch('https://x.test/ok')
   await context.fetch('https://x.test/missing', { method: 'post' })
   await context.fetch('https://x.test/boom').catch(() => undefined)
+  await context.fetch('https://x.test/abort').catch(() => undefined)
   const xhr = new context.XMLHttpRequest()
   xhr.open('get', 'https://x.test/xhr')
   xhr.send()
@@ -419,14 +424,15 @@ const hooked = await hookWorld()
 check('R18: ui_network — статусы fetch/XHR через хук', () => {
   expect(hooked.installed.installed === true && hooked.again.installed === false, `идемпотентность: ${JSON.stringify([hooked.installed, hooked.again])}`)
   const { report } = hooked
-  expect(report.hooked === true && report.requests.length === 4, JSON.stringify(report.requests))
-  const [ok, missing, boom, xhr] = report.requests
+  expect(report.hooked === true && report.requests.length === 5, JSON.stringify(report.requests))
+  const [ok, missing, boom, aborted, xhr] = report.requests
+  expect(aborted.aborted === true, `AbortError не помечен: ${JSON.stringify(aborted)}`)
   expect(ok.status === 200 && ok.ok === true && ok.method === 'GET', JSON.stringify(ok))
   expect(missing.status === 404 && missing.method === 'POST', JSON.stringify(missing))
   expect(boom.status === 0 && boom.error === 'Failed to fetch', JSON.stringify(boom))
   expect(xhr.kind === 'xhr' && xhr.status === 500 && xhr.method === 'GET', JSON.stringify(xhr))
   expect(report.failedRequests === 3, `failedRequests=${report.failedRequests}`)
-  return '200/404/сбой/XHR 500 → 3 неудачных, повторная установка не дублирует хук'
+  return '200/404/сбой/отмена/XHR 500 → 3 неудачных (отмена не в счёт), повторная установка не дублирует хук'
 })
 check('R19: networkScript без хука не падает', () => {
   const plain = JSON.parse(vm.runInNewContext(scripts.networkScript(10), { performance: { getEntriesByType: () => [{ name: 'a', initiatorType: 'img', duration: 500, transferSize: 300000, startTime: 1 }] }, window: {} }))

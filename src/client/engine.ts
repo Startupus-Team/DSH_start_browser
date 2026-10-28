@@ -634,10 +634,15 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     created.style.cssText = 'display:flex;flex:1 1 auto;min-height:0;width:100%;height:100%;border:none;'
 
     // Emulated colour scheme lives in the page, so every new document needs it again.
+    const installNetHook = (): void => {
+      try {
+        void Promise.resolve(created.executeJavaScript?.(netHookScript(), false)).catch(() => undefined)
+      } catch {
+        // Electron throws synchronously while the guest is not attached yet.
+      }
+    }
     const reapplyScheme = (): void => {
       try {
-        // Per-document hooks: the network recorder always, the colour scheme when one is emulated.
-        void Promise.resolve(created.executeJavaScript?.(netHookScript(), false)).catch(() => undefined)
         if (session.colorScheme === null) return
         void Promise.resolve(created.executeJavaScript?.(colorSchemeScript(session.colorScheme), false)).catch(() => undefined)
       } catch {
@@ -647,6 +652,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     created.addEventListener('did-finish-load', reapplyScheme)
     created.addEventListener('dom-ready', () => {
       session.ready = true
+      installNetHook()
       reapplyScheme()
       // `dom-ready` fires for every document, so navigating here unconditionally
       // makes the page reload forever. Navigate exactly once.
@@ -1647,9 +1653,24 @@ export function startEngine(): () => void {
           if (view === null) {
             await report(base as string, { navResult: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)', at: Date.now() } })
           } else {
-            const outcome = navigateGuest(view, action)
-            // History and reload settle asynchronously: give the guest a moment before reporting the address.
-            if (outcome.ok) await new Promise((resolve) => setTimeout(resolve, 400))
+            const before = view.getURL?.() ?? ''
+            let outcome = navigateGuest(view, action)
+            if (outcome.ok) {
+              // History steps settle asynchronously: wait for the address to change (reload keeps it, so just settle).
+              const deadline = Date.now() + 3000
+              while (action !== 'reload' && Date.now() < deadline && (view.getURL?.() ?? '') === before) {
+                await new Promise((resolve) => setTimeout(resolve, 100))
+              }
+              if (action === 'reload') await new Promise((resolve) => setTimeout(resolve, 500))
+              // The guest starts on a service about:blank entry: stepping back onto it would strand the agent.
+              if (action === 'back' && (view.getURL?.() ?? '').startsWith('about:blank')) {
+                view.goForward?.()
+                await new Promise((resolve) => setTimeout(resolve, 500))
+                outcome = { ok: false, reason: 'начало истории: дальше только служебная пустая страница' }
+              } else if (action !== 'reload' && (view.getURL?.() ?? '') === before) {
+                outcome = { ok: false, reason: 'адрес не изменился за 3 с (страница могла отменить переход)' }
+              }
+            }
             await report(base as string, { navResult: { ...outcome, url: view.getURL?.() ?? '', at: Date.now() } })
             setStatus(outcome.ok ? `агент: ${action}` : `навигация не выполнена: ${outcome.reason}`)
           }

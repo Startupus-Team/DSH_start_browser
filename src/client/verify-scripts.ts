@@ -271,7 +271,11 @@ export function actScript(op: string, selector: string, value: string): string {
         var box = el.getBoundingClientRect();
         var init = { bubbles: true, cancelable: true, clientX: Math.round(box.left + box.width / 2), clientY: Math.round(box.top + box.height / 2), view: window };
         var fire = function (type, bubbles) { el.dispatchEvent(new MouseEvent(type, Object.assign({}, init, { bubbles: bubbles }))); };
-        if (typeof PointerEvent !== 'undefined') el.dispatchEvent(new PointerEvent('pointerover', init));
+        if (typeof PointerEvent !== 'undefined') {
+          el.dispatchEvent(new PointerEvent('pointerover', init));
+          el.dispatchEvent(new PointerEvent('pointerenter', Object.assign({}, init, { bubbles: false })));
+          el.dispatchEvent(new PointerEvent('pointermove', init));
+        }
         fire('mouseover', true);
         fire('mouseenter', false);
         fire('mousemove', true);
@@ -295,7 +299,8 @@ export function actScript(op: string, selector: string, value: string): string {
         }
         if (el.options[chosen].disabled) return JSON.stringify({ status: 'ERROR', message: 'вариант отключён' });
         el.focus();
-        el.selectedIndex = chosen;
+        if (el.multiple) el.options[chosen].selected = true;
+        else el.selectedIndex = chosen;
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         return JSON.stringify({ status: 'OK', op: op, value: el.value });
@@ -438,7 +443,7 @@ export function networkScript(limit: number): string {
       const heavy = rows.filter((row) => row.transferBytes >= 200000).length;
       const hook = window.__startapusNet;
       const requests = hook && Array.isArray(hook.log) ? hook.log.slice(-MAX) : [];
-      const failedRequests = requests.filter((row) => row.error || row.status >= 400 || row.status === 0).length;
+      const failedRequests = requests.filter((row) => !row.aborted && (row.error || row.status >= 400 || row.status === 0)).length;
       return JSON.stringify({ status: 'OK', total: rows.length, slow, heavy, entries: rows.slice(-MAX), hooked: !!hook, requests, failedRequests });
     } catch (error) {
       return JSON.stringify({ status: 'ERROR', message: String(error && error.message ? error.message : error) });
@@ -626,7 +631,7 @@ export function netHookScript(): string {
           const url = clip(typeof input === 'string' ? input : (input && input.url) || input);
           return original.apply(this, arguments).then(
             (response) => { push({ kind: 'fetch', method, url, status: response.status, ok: response.ok, ms: Math.round(performance.now() - started) }); return response; },
-            (error) => { push({ kind: 'fetch', method, url, status: 0, ok: false, ms: Math.round(performance.now() - started), error: clip(error && error.message ? error.message : error) }); throw error; },
+            (error) => { const aborted = !!(error && error.name === 'AbortError'); push({ kind: 'fetch', method, url, status: 0, ok: false, ms: Math.round(performance.now() - started), error: clip(error && error.message ? error.message : error), ...(aborted ? { aborted: true } : {}) }); throw error; },
           );
         };
       }
@@ -638,8 +643,10 @@ export function netHookScript(): string {
         proto.send = function () {
           const meta = this.__startapus || { method: 'GET', url: '' };
           const started = performance.now();
+          let aborted = false;
+          this.addEventListener('abort', () => { aborted = true; });
           this.addEventListener('loadend', () => {
-            push({ kind: 'xhr', method: meta.method, url: meta.url, status: this.status, ok: this.status >= 200 && this.status < 400, ms: Math.round(performance.now() - started), ...(this.status === 0 ? { error: 'сеть/отмена' } : {}) });
+            push({ kind: 'xhr', method: meta.method, url: meta.url, status: this.status, ok: this.status >= 200 && this.status < 400, ms: Math.round(performance.now() - started), ...(aborted ? { aborted: true } : (this.status === 0 ? { error: 'сеть' } : {})) });
           });
           return send.apply(this, arguments);
         };

@@ -106,6 +106,7 @@ interface ClientState {
   hasGuest: boolean
   lastCommand: { id: string; kind: string; at: number } | null
   captureError: string | null
+  captureErrorAt: number
   hidden: boolean
   counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number; navigations: number; loadErrors: number; crashes: number }
 }
@@ -340,6 +341,7 @@ function blankClient(): ClientState {
   hasGuest: false,
   lastCommand: null,
   captureError: null,
+  captureErrorAt: 0,
   hidden: false,
     counters: { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0, crashes: 0 },
   }
@@ -1289,6 +1291,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       }
       if (typeof body.captureError === 'string') {
         client.captureError = body.captureError
+        client.captureErrorAt = Date.now()
         probe('capture:error', { error: body.captureError })
       }
       if (typeof body.actResult === 'object' && body.actResult !== null) {
@@ -1684,7 +1687,7 @@ async function waitForCapture(commandId: string, since: number): Promise<Record<
         commandId,
       }
     }
-    if (client.captureError !== null) fail('E_CAPTURE', client.captureError, 'проверьте, что вкладка видима, и повторите')
+    if (client.captureError !== null && client.captureErrorAt >= since) fail('E_CAPTURE', client.captureError, 'проверьте, что вкладка видима, и повторите')
     await new Promise((resolve) => setTimeout(resolve, 100))
   }
   fail('E_TIMEOUT', `снимок не пришёл за 10 с (команда ${commandId})`, 'откройте вкладку Startapus и повторите')
@@ -2254,12 +2257,21 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
           fail('E_HUMAN_CONTROL', 'человек забрал управление', 'нажмите «Вернуть агенту» в панели')
         }
         // The page may hold sessions, tokens and storage: the first script on a new origin needs a deliberate yes.
+        // The gate must judge the page the script will run in: the addressed tab, not the last one that reported.
+        const targetTab = String(args.tabId ?? '')
+        let targetUrl = client.url
+        if (targetTab !== '') {
+          const known = client.sessions.find((row) => row.tabId === targetTab)
+          if (known === undefined) fail('E_NOT_FOUND', `нет вкладки ${targetTab}`, 'список вкладок — ui_tabs')
+          targetUrl = known.url
+        }
         let origin = ''
         try {
-          origin = new URL(client.url).origin
+          origin = new URL(targetUrl).origin
         } catch {
           throw new Error('E_NO_EFFECT: страница не открыта — сначала ui_open')
         }
+        if (origin === 'null') throw new Error('E_NO_EFFECT: у страницы нет origin (about:blank?) — сначала ui_open')
         if (!approvedOrigins.has(origin) && args.confirmOrigin !== true) {
           throw new Error(`E_APPROVAL_REQUIRED: ui_js на ${origin} получит доступ к данным страницы (storage, cookie без httpOnly) — повторите вызов с confirmOrigin: true`)
         }
@@ -2411,7 +2423,6 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         const selector = String(args.selector ?? '')
         const tabId = String(args.tabId ?? '')
         const since = Date.now()
-        if (args.wait === true) client.captureError = null
         const command = enqueue('capture', { selector, ...(tabId === '' ? {} : { tabId }), ...(args.diff === true ? { diff: true } : {}) })
         if (args.wait === true) return waitForCapture(command.id, since)
         return {
@@ -3143,8 +3154,21 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
       client.control = savedControl
     }
     await rejects('E_APPROVAL_REQUIRED', () => call('ui_js', { code: 'return 1' }))
+    const savedSessions = client.sessions
+    client.sessions = [{ tabId: 'tab-evil', url: 'https://evil.test/x', title: '' }]
+    approvedOrigins.add('https://js.test')
+    try {
+      await rejects('E_APPROVAL_REQUIRED', () => call('ui_js', { code: 'return 1', tabId: 'tab-evil' }))
+      await rejects('E_NOT_FOUND', () => call('ui_js', { code: 'return 1', tabId: 'tab-missing' }))
+    } finally {
+      client.sessions = savedSessions
+      approvedOrigins.delete('https://js.test')
+      approvedOrigins.delete('https://evil.test')
+    }
     if (commands.length !== 0) throw new Error('отклонённый ui_js поставил команду')
 
+    const sessionsBeforeJs = client.sessions
+    client.sessions = [{ tabId: 'tab-j', url: 'https://js.test/page', title: '' }]
     const running = call('ui_js', { code: 'return document.title', tabId: 'tab-j', confirmOrigin: true }) as Promise<Record<string, unknown>>
     const jsCommand = commands[commands.length - 1]
     if (jsCommand?.kind !== 'js' || jsCommand.args.code !== 'return document.title' || jsCommand.args.tabId !== 'tab-j') {
@@ -3158,6 +3182,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     const failing = call('ui_js', { code: 'throw 1' }) as Promise<unknown>
     await send({ jsResult: { status: 'ERROR', message: 'boom', at: Date.now() } })
     await rejects('E_JS', () => failing)
+    client.sessions = sessionsBeforeJs
     approvedOrigins.delete('https://js.test')
     client.url = savedUrl
     commands.length = 0
@@ -3227,11 +3252,12 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     seedTransport()
     commands.length = 0
     await rejects('E_NO_EFFECT', () => call('ui_navigate', { action: 'sideways' }))
+    const controlBefore = client.control
     client.control = 'human'
     try {
       await rejects('E_HUMAN_CONTROL', () => call('ui_navigate', { action: 'back' }))
     } finally {
-      client.control = null
+      client.control = controlBefore
     }
     if (commands.length !== 0) throw new Error('отклонённый ui_navigate поставил команду')
 
