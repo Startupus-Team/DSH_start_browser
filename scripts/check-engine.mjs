@@ -83,7 +83,7 @@ globalThis.document = {
   visibilityState: 'visible',
 }
 globalThis.window = {
-  setTimeout: (fn) => 0,
+  setTimeout: (fn) => { queueMicrotask(() => { try { fn() } catch { /* stub */ } }); return 0 },
   clearTimeout: () => {},
   setInterval: () => 0,
   clearInterval: () => {},
@@ -274,8 +274,26 @@ await check('E12: параллельная активация = одна сес�
   return '3 вызова → 1 acquire, 1 сессия'
 })
 
+await check('E13: падение гостя восстанавливает страницу', async () => {
+  const hostCrash = new FakeElement('div')
+  body.appendChild(hostCrash)
+  await engine.showSession('crash', 'https://crash.example/', hostCrash)
+  const guest = engine.guestOf('crash')
+  expect(guest !== null, 'гость не создан')
+  guest.fire('dom-ready')
+  const before = engine.engineState().counters.recoveries
+  guest.fire('render-process-gone')
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const after = engine.engineState().counters.recoveries
+  expect(after === before + 1, `recoveries: ${before} → ${after}`)
+  const fresh = engine.guestOf('crash')
+  expect(fresh !== null && fresh !== guest, 'гость не пересоздан')
+  return 'render-process-gone → recoveries+1, новый гость'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 12/12')
+console.log('ENGINE OK: 13/13')

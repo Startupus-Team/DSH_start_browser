@@ -50,6 +50,7 @@ interface Session {
   title: string
   scrollY: number
   lastActiveAt: number
+  host: HTMLElement | null
   ready: boolean
   /** The first navigation already happened; later dom-ready events must not repeat it. */
   navigated: boolean
@@ -87,6 +88,7 @@ let status = 'подготовка guest…'
 let stage = 'ready'
 let activeTabId: string | null = null
 let loopStarted = false
+let ticking = false
 let misses = 0
 let base: string | null = null
 /** Who currently drives the page: the agent, or the human (via the pane button). */
@@ -358,6 +360,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     title: '',
     scrollY: 0,
     lastActiveAt: Date.now(),
+    host,
     ready: false,
     navigated: false,
   }
@@ -406,6 +409,13 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
       })
       while (consoleRing.length > 30) consoleRing.shift()
     })
+    const onLost = (kind: string) => (): void => {
+      handleGuestLoss(session, kind)
+    }
+    created.addEventListener('render-process-gone', onLost('render-process-gone'))
+    created.addEventListener('crashed', onLost('crashed'))
+    created.addEventListener('destroyed', onLost('destroyed'))
+
     created.addEventListener('did-fail-load', (event: Event) => {
       const detail = (event as CustomEvent<{ errorCode?: number; errorDescription?: string; validatedURL?: string }>).detail
       if (detail?.errorCode === -3) return
@@ -431,6 +441,28 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     notify()
     return null
   }
+}
+
+/**
+ * The guest process died (crash, OOM, killed): the lease is dead too. Forget the
+ * guest and rebuild the session in place — otherwise the pane turns into a zombie
+ * with `hasGuest: true` and no pixels.
+ */
+function handleGuestLoss(session: Session, kind: string): void {
+  if (session.guest === null) return
+  counters.recoveries += 1
+  session.guest = null
+  session.ready = false
+  session.navigated = false
+  setStatus(`гость потерян (${kind}) — восстанавливаю страницу`)
+  notify()
+  const host = session.host
+  const url = session.url.startsWith('about:blank') ? START_URL : session.url
+  window.setTimeout(() => {
+    if (sessions.get(session.tabId) !== session) return
+    sessions.delete(session.tabId)
+    void showSession(session.tabId, url, host)
+  }, 0)
 }
 
 function onNavigate(session: Session, guest: GuestElement): void {
@@ -685,6 +717,8 @@ export function startEngine(): void {
         // One bad report must never kill the poll loop: that leaves the tab
         // connected but deaf to agent commands.
         setStatus(`цикл: ${String(error)}`)
+      } finally {
+        ticking = false
       }
     }
     const tickOnce = async (): Promise<void> => {
@@ -1026,7 +1060,7 @@ export function startEngine(): void {
           const property = String(command.args.property ?? '')
           setStatus(`агент: проверяю ${property === '' ? method : property}`)
           if (view === null || view.executeJavaScript === undefined) {
-            await report(base as string, { verify: { taskId, error: 'guest недоступен' } })
+            await report(base as string, { verify: { taskId, commandId: command.id, error: 'guest недоступен' } })
           } else {
             const reload = verifyNeedsReload(command.args)
             if (reload) view.reload?.()
@@ -1044,19 +1078,19 @@ export function startEngine(): void {
                 parsed = { status: 'ERROR', value: String(rawResult) }
               }
               if (parsed.status === 'OK' && typeof parsed.value === 'string') {
-                await report(base as string, { verify: { taskId, value: parsed.value } })
+                await report(base as string, { verify: { taskId, commandId: command.id, value: parsed.value } })
                 setStatus(`проверено: ${parsed.value.slice(0, 80)}`)
               } else if (parsed.status === 'MISSING') {
-                await report(base as string, { verify: { taskId, error: 'E_STALE: элемент не найден' } })
+                await report(base as string, { verify: { taskId, commandId: command.id, error: 'E_STALE: элемент не найден' } })
               } else if (parsed.status === 'AMBIGUOUS') {
-                await report(base as string, { verify: { taskId, error: `E_AMBIGUOUS: локатор нашёл ${parsed.count ?? 0} элементов` } })
+                await report(base as string, { verify: { taskId, commandId: command.id, error: `E_AMBIGUOUS: локатор нашёл ${parsed.count ?? 0} элементов` } })
               } else if (parsed.status === 'STALE') {
                 await report(base as string, { verify: { taskId, error: `E_STALE: тег ${parsed.tag ?? '?'} вместо ${parsed.expect ?? '?'}` } })
               } else {
                 await report(base as string, { verify: { taskId, error: parsed.value ?? 'замер не удался' } })
               }
             } catch (error) {
-              await report(base as string, { verify: { taskId, error: String(error) } })
+              await report(base as string, { verify: { taskId, commandId: command.id, error: String(error) } })
             }
           }
         }

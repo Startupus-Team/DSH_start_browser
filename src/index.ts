@@ -16,7 +16,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -195,7 +195,7 @@ const WIP_LIMIT = 5
 
 const tasks = new Map<string, ReviewTask>()
 /** taskId -> the verification currently travelling to the renderer. */
-const pendingVerifications = new Map<string, { taskId: string; at: number }>()
+const pendingVerifications = new Map<string, { commandId: string; at: number }>()
 /** tool name -> call timestamps inside the current window. */
 const callLog = new Map<string, number[]>()
 const RATE_WINDOW_MS = 60_000
@@ -355,7 +355,10 @@ export function saveTasks(): void {
       seq: taskSeq,
       tasks: [...tasks.values()].slice(-TASK_LIMIT),
     }
-    writeFileSync(file, JSON.stringify(payload), 'utf8')
+    // Atomic replace: a crash mid-write must not truncate the queue.
+    const temp = `${file}.tmp`
+    writeFileSync(temp, JSON.stringify(payload), 'utf8')
+    renameSync(temp, file)
   } catch (error) {
     probe('store:save-error', { error: String(error) })
   }
@@ -1166,9 +1169,16 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
       }
       const verify = body.verify
       if (typeof verify === 'object' && verify !== null) {
-        const payload = verify as { taskId?: string; value?: string; error?: string }
+        const payload = verify as { taskId?: string; value?: string; error?: string; commandId?: string }
         const taskId = String(payload.taskId ?? '')
         const task = tasks.get(taskId)
+        const pending = pendingVerifications.get(taskId)
+        if (pending !== undefined && String(payload.commandId ?? '') !== pending.commandId) {
+          // A late or spoofed result for another command must not decide the task.
+          probe('verify:stale', { taskId, expected: pending.commandId, got: String(payload.commandId ?? '') })
+          sendJson(res, 200, { ok: true })
+          return
+        }
         pendingVerifications.delete(taskId)
         if (task !== undefined && task.acceptance !== null) {
           if (typeof payload.error === 'string' && payload.error !== '') {
@@ -1630,7 +1640,6 @@ function buildTools(): Array<Record<string, unknown>> {
         }
         task.state = 'verifying'
         task.updatedAt = Date.now()
-        pendingVerifications.set(id, { taskId: id, at: Date.now() })
         const command = enqueue('verify', {
           taskId: id,
           selector: task.selector,
@@ -1638,6 +1647,7 @@ function buildTools(): Array<Record<string, unknown>> {
           method: task.acceptance.method,
           property: task.acceptance.property,
         })
+        pendingVerifications.set(id, { commandId: command.id, at: Date.now() })
         return { queued: true, commandId: command.id, taskId: id, method: task.acceptance.method, property: task.acceptance.property }
       },
     },
@@ -2166,7 +2176,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
 
     try {
       call('task_update', { id: created.id, state: 'triaged' })
-      const queued = await call('ui_verify', { id: created.id }) as { queued: boolean }
+      const queued = await call('ui_verify', { id: created.id }) as { queued: boolean; commandId?: string }
       if (!queued.queued) throw new Error('ui_verify не поставил команду в очередь')
 
       const polled = fakeResponse()
@@ -2176,7 +2186,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
 
       const reported = fakeResponse()
       await handleRoute(fakeRequest({
-        verify: { taskId: created.id, value: observed },
+        verify: { taskId: created.id, value: observed, commandId: queued.commandId },
       }, 'POST', '/startapus-browser/client/event'), reported.res)
 
       const task = tasks.get(created.id)
@@ -2243,7 +2253,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
         await handleRoute(fakeRequest({}, 'POST', '/startapus-browser/client/poll'), polled.res)
         const reported = fakeResponse()
         await handleRoute(fakeRequest({
-          verify: { taskId: created.id, value: '12px' },
+          verify: { taskId: created.id, value: '12px', commandId: (await call('ui_verify', { id: created.id }) as { commandId?: string }).commandId },
         }, 'POST', '/startapus-browser/client/event'), reported.res)
       }
       const task = tasks.get(created.id)
@@ -2338,6 +2348,47 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     results.push({ name: 'FR-11b: baseline фиксируется при создании задачи', pass: true, detail: 'baseline=12px → false; ожидалось 12px → true' })
   } catch (error) {
     results.push({ name: 'FR-11b: baseline фиксируется при создании задачи', pass: false, detail: String(error) })
+  }
+
+  // A verification result must belong to the command that was issued.
+  try {
+    seedTransport()
+    const heartbeat = fakeResponse()
+    await handleRoute(fakeRequest({
+      stage: 'ready',
+      url: 'https://cmd.example/',
+      evidence: { selector: '#cmd', tag: 'div', env: { url: 'https://cmd.example/' }, computed: { gap: '12px' } },
+    }, 'POST', '/startapus-browser/client/event'), heartbeat.res)
+    const created = call('task_create', {
+      problem: 'audit: commandId',
+      method: 'computed',
+      property: 'gap',
+      expected: '8px',
+    }) as { id: string }
+    try {
+      call('task_update', { id: created.id, state: 'triaged' })
+      const issued = call('ui_verify', { id: created.id }) as { commandId?: string }
+      const stale = fakeResponse()
+      await handleRoute(fakeRequest({
+        verify: { taskId: created.id, value: '8px', commandId: 'cmd-forged' },
+      }, 'POST', '/startapus-browser/client/event'), stale.res)
+      const afterStale = tasks.get(created.id)
+      if (afterStale?.state !== 'verifying') throw new Error(`чужая команда изменила состояние: ${afterStale?.state}`)
+      const ok = fakeResponse()
+      await handleRoute(fakeRequest({
+        verify: { taskId: created.id, value: '8px', commandId: issued.commandId },
+      }, 'POST', '/startapus-browser/client/event'), ok.res)
+      const afterOk = tasks.get(created.id)
+      if (afterOk?.state !== 'verified') throw new Error(`своя команда не принята: ${afterOk?.state}`)
+      commands.length = 0
+      pendingVerifications.delete(created.id)
+      results.push({ name: 'SEC-1: verify принимает только свою команду', pass: true, detail: 'чужой commandId проигнорирован, свой → verified' })
+    } finally {
+      tasks.delete(created.id)
+      pendingVerifications.delete(created.id)
+    }
+  } catch (error) {
+    results.push({ name: 'SEC-1: verify принимает только свою команду', pass: false, detail: String(error) })
   }
 
   // Human control blocks agent mutations.
