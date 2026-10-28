@@ -65,7 +65,7 @@ export interface EngineState {
   tabs: number
   url: string
   hasGuest: boolean
-  counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number }
+  counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number; navigations: number; loadErrors: number }
   panels: number
 }
 
@@ -82,7 +82,9 @@ const sessions = new Map<string, Session>()
 /** In-flight creations, so a re-render cannot acquire several leases. */
 const pending = new Map<string, Promise<Session | null>>()
 const consoleRing: Array<{ level: number; message: string }> = []
-const counters = { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0 }
+const counters = { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0 }
+/** Last navigation failure as the guest reported it. */
+let lastLoadError: { code: number; description: string; url: string; at: number } | null = null
 
 let evidence: ElementPick | null = null
 let crop: { bytes: number; width: number; height: number; base64?: string } | null = null
@@ -210,6 +212,7 @@ export function openInSession(tabId: string, rawUrl: string): { ok: boolean; rea
     return { ok: false, reason, url: normalized.url }
   }
   try {
+    counters.navigations += 1
     guest.loadURL(normalized.url)
     lastNavAttempt = { url: normalized.url, ok: true, reason: '', hasGuest: true, hasLoadURL: true, at: Date.now() }
     setStatus(`открываю ${normalized.url}`)
@@ -405,6 +408,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
       session.navigated = true
       const remembered = session.url.startsWith('about:blank') ? '' : session.url
       const target = remembered === '' ? initialUrl : remembered
+      counters.navigations += 1
       created.loadURL?.(target)
       setStatus(`guest подключён: ${target}`)
       notify()
@@ -428,9 +432,18 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     created.addEventListener('destroyed', onLost('destroyed'))
 
     created.addEventListener('did-fail-load', (event: Event) => {
-      const detail = (event as CustomEvent<{ errorCode?: number; errorDescription?: string; validatedURL?: string }>).detail
-      if (detail?.errorCode === -3) return
-      setStatus(`ошибка ${detail?.errorCode ?? ''} ${detail?.errorDescription ?? ''}`)
+      const detail = (event as CustomEvent<{ errorCode?: number; errorDescription?: string; validatedURL?: string; isMainFrame?: boolean }>).detail
+      const code = Number(detail?.errorCode ?? 0)
+      if (code === -3) return
+      counters.loadErrors += 1
+      lastLoadError = {
+        code,
+        description: String(detail?.errorDescription ?? ''),
+        url: String(detail?.validatedURL ?? created.getURL?.() ?? ''),
+        at: Date.now(),
+      }
+      setStatus(`ошибка загрузки ${code} ${lastLoadError.description} · ${lastLoadError.url}`)
+      notify()
     })
 
     container.appendChild(created)
@@ -1167,6 +1180,7 @@ export function startEngine(): void {
         lastNavAttempt,
         shortcutState,
         clientRev: CLIENT_REV,
+        lastLoadError,
         control: controlHolder,
         agentActive: Date.now() < agentActiveUntil,
       })

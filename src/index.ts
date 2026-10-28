@@ -90,6 +90,7 @@ interface ClientState {
   network: Record<string, unknown> | null
   inspect: Record<string, unknown> | null
   clientRev: string
+  lastLoadError: Record<string, unknown> | null
   control: 'agent' | 'human' | null
   agentActive: boolean
   panelStatus: string
@@ -299,6 +300,7 @@ function blankClient(): ClientState {
   network: null,
   inspect: null,
   clientRev: '',
+  lastLoadError: null,
   control: null,
   agentActive: false,
   panelStatus: '',
@@ -931,6 +933,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         capabilities: CAPABILITIES,
         buildRev: BUILD_REV,
         clientRev: client.clientRev === '' ? null : client.clientRev,
+        lastLoadError: client.lastLoadError,
         revMatch: client.clientRev === '' ? null : client.clientRev === BUILD_REV,
         activeTab: client.engineActive,
         targetTab: client.engineActive,
@@ -1040,6 +1043,10 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           ;(client as unknown as Record<string, unknown>)[field] = value
           probe(`${field}:done`, { at: (value as { at?: number }).at ?? Date.now() })
         }
+      }
+      if (typeof body.lastLoadError === 'object' && body.lastLoadError !== null) {
+        client.lastLoadError = body.lastLoadError as Record<string, unknown>
+        probe('load:error', client.lastLoadError)
       }
       if (typeof body.clientRev === 'string' && body.clientRev !== '') {
         if (client.clientRev !== '' && client.clientRev !== body.clientRev) {
