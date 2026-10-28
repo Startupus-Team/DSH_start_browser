@@ -72,7 +72,7 @@ interface ClientState {
   viewport: { width: number; height: number } | null
   evidence: Record<string, unknown> | null
   console: Array<Record<string, unknown>>
-  crop: { bytes: number; width: number; height: number; path: string } | null
+  crop: { bytes: number; width: number; height: number; path: string; diff?: Record<string, unknown> } | null
   area: Record<string, unknown> | null
   lastAct: { op: string; status: string; message: string } | null
   lastSelect: { selector: string; status: string; count: number } | null
@@ -1187,7 +1187,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         client.console = (body.console as Array<Record<string, unknown>>).slice(-200)
       }
       if (typeof body.crop === 'object' && body.crop !== null) {
-        const crop = body.crop as { bytes?: number; width?: number; height?: number; mime?: string; base64?: string }
+        const crop = body.crop as { bytes?: number; width?: number; height?: number; mime?: string; base64?: string; diff?: unknown }
         client.crop = null
         if (
           typeof crop.bytes === 'number' && crop.bytes > 0 && crop.bytes <= 2 * 1024 * 1024 &&
@@ -1206,6 +1206,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
               width: typeof crop.width === 'number' ? crop.width : 0,
               height: typeof crop.height === 'number' ? crop.height : 0,
               path: file,
+              ...(typeof crop.diff === 'object' && crop.diff !== null ? { diff: crop.diff as Record<string, unknown> } : {}),
             }
             probe('crop:saved', { bytes: crop.bytes, path: file })
           } catch (error) {
@@ -1799,6 +1800,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         lastAct: client.lastAct,
         lastSelect: client.lastSelect,
         viewportResult: client.viewportResult,
+        crop: client.crop,
         evidenceTab: evidenceByTab.has(clientKey) ? clientKey : null,
         pageScan: client.pageScan === null ? null : { total: client.pageScan.total, at: client.pageScan.at, error: client.pageScan.error },
         newTabResult: client.newTabResult,
@@ -2297,6 +2299,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       description: 'Снять снимок страницы (или элемента) по команде агента. Пиксели в модель не передаются: возвращаются метаданные и путь к файлу, который открывает человек.',
       parameters: objectSchema({
         selector: { type: 'string', description: 'Селектор элемента; пусто — весь видимый экран' },
+        diff: { type: 'boolean', description: 'Сравнить с предыдущим снимком той же цели (вкладка + селектор): доля изменившихся пикселей и рамка изменений — в ui_status.crop.diff. Первый вызов только запоминает снимок' },
         tabId: tabIdParam,
       }, []),
       output: output(asText),
@@ -2304,7 +2307,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         requireTransport()
         const selector = String(args.selector ?? '')
         const tabId = String(args.tabId ?? '')
-        const command = enqueue('capture', tabId === '' ? { selector } : { selector, tabId })
+        const command = enqueue('capture', { selector, ...(tabId === '' ? {} : { tabId }), ...(args.diff === true ? { diff: true } : {}) })
         return {
           queued: true,
           commandId: command.id,
@@ -3049,6 +3052,39 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     commands.length = 0
     client.control = null
     results.push({ name: 'P3-2: ui_js — гейт, лимиты, результат и ошибка', pass: false, detail: String(error) })
+  }
+
+  // ui_screenshot { diff }: the flag reaches the renderer and the report reaches ui_status.
+  try {
+    seedTransport()
+    commands.length = 0
+    const queued = call('ui_screenshot', { selector: '#hero', diff: true, tabId: 'tab-d' }) as { queued?: boolean }
+    const shot = commands[commands.length - 1]
+    if (queued.queued !== true || shot?.kind !== 'capture' || shot.args.diff !== true || shot.args.selector !== '#hero' || shot.args.tabId !== 'tab-d') {
+      throw new Error(`diff не передан: ${JSON.stringify(shot)}`)
+    }
+    commands.length = 0
+    call('ui_screenshot', { selector: '#hero' })
+    if (commands[commands.length - 1]?.args.diff !== undefined) throw new Error('diff попал в команду без запроса')
+    commands.length = 0
+
+    const diffReply = fakeResponse()
+    await handleRoute(fakeRequest({
+      crop: {
+        bytes: 6, width: 200, height: 80, base64: Buffer.from('shot-1').toString('base64'), mime: 'image/png',
+        diff: { hasPrevious: true, sameSize: true, changedPixels: 120, totalPixels: 16000, changedRatio: 0.0075, bbox: { x: 4, y: 6, width: 30, height: 4 } },
+      },
+    }, 'POST', '/startapus-browser/client/event'), diffReply.res)
+    const saved = client.crop
+    if (saved !== null) rmSync(saved.path, { force: true })
+    const statusCrop = unwrap<{ crop?: { diff?: { changedRatio?: number; bbox?: { width?: number } } } }>(call('ui_status', {})).crop
+    if (statusCrop?.diff?.changedRatio !== 0.0075 || statusCrop.diff.bbox?.width !== 30) {
+      throw new Error(`diff не дошёл до ui_status: ${JSON.stringify(statusCrop)}`)
+    }
+    results.push({ name: 'P3-3: ui_screenshot diff', pass: true, detail: 'флаг diff → команда; crop.diff → ui_status.crop.diff' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P3-3: ui_screenshot diff', pass: false, detail: String(error) })
   }
 
   // Phase 2: typed failures carry a hint the agent can act on.

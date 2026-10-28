@@ -118,3 +118,59 @@ export function normalizeWait(args: Record<string, unknown>): WaitSpecResult {
 }
 
 export const COLOR_SCHEMES = ['dark', 'light', 'auto'] as const
+
+/** Result of comparing two RGBA frames of equal size. */
+export interface PixelDiff {
+  changedPixels: number
+  totalPixels: number
+  changedRatio: number
+  /** Bounding box of changed pixels, or null when nothing changed. */
+  bbox: { x: number; y: number; width: number; height: number } | null
+}
+
+/**
+ * Compare two RGBA buffers. A pixel counts as changed when any channel differs by
+ * more than `threshold` (anti-aliasing noise stays below the default).
+ */
+export function diffPixels(
+  before: ArrayLike<number>,
+  after: ArrayLike<number>,
+  width: number,
+  height: number,
+  threshold = 24,
+): PixelDiff {
+  const total = Math.max(0, width * height)
+  let changed = 0
+  let minX = width
+  let minY = height
+  let maxX = -1
+  let maxY = -1
+  for (let index = 0; index < total; index += 1) {
+    const offset = index * 4
+    if (
+      Math.abs(before[offset] - after[offset]) > threshold
+      || Math.abs(before[offset + 1] - after[offset + 1]) > threshold
+      || Math.abs(before[offset + 2] - after[offset + 2]) > threshold
+      || Math.abs(before[offset + 3] - after[offset + 3]) > threshold
+    ) {
+      changed += 1
+      const x = index % width
+      const y = Math.floor(index / width)
+      if (x < minX) minX = x
+      if (x > maxX) maxX = x
+      if (y < minY) minY = y
+      if (y > maxY) maxY = y
+    }
+  }
+  return {
+    changedPixels: changed,
+    totalPixels: total,
+    changedRatio: total === 0 ? 0 : Math.round((changed / total) * 10000) / 10000,
+    bbox: changed === 0 ? null : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 },
+  }
+}
+
+/** Key under which the previous screenshot of the same target is remembered. */
+export function captureKey(tabId: string, selector: string): string {
+  return `${tabId === '' ? '*' : tabId}|${selector}`
+}

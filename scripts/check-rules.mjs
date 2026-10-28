@@ -249,8 +249,33 @@ check('R12: ui_js — результат, ошибки, усечение', () =>
   return 'значение, async, undefined→null, throw, цикл, усечение'
 })
 
+const frame = (width, height, paint) => {
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let index = 0; index < width * height; index += 1) {
+    const [r, g, b] = paint(index % width, Math.floor(index / width))
+    data.set([r, g, b, 255], index * 4)
+  }
+  return data
+}
+check('R13: diff скриншотов — доля, рамка и порог', () => {
+  const white = frame(10, 10, () => [255, 255, 255])
+  const same = rules.diffPixels(white, frame(10, 10, () => [255, 255, 255]), 10, 10)
+  expect(same.changedPixels === 0 && same.bbox === null && same.changedRatio === 0, JSON.stringify(same))
+  const patch = frame(10, 10, (x, y) => (x >= 2 && x <= 4 && y >= 6 && y <= 7 ? [0, 0, 0] : [255, 255, 255]))
+  const changed = rules.diffPixels(white, patch, 10, 10)
+  expect(changed.changedPixels === 6 && changed.changedRatio === 0.06, JSON.stringify(changed))
+  expect(JSON.stringify(changed.bbox) === JSON.stringify({ x: 2, y: 6, width: 3, height: 2 }), JSON.stringify(changed.bbox))
+  const noise = rules.diffPixels(white, frame(10, 10, () => [245, 250, 255]), 10, 10)
+  expect(noise.changedPixels === 0, `шум ниже порога посчитан изменением: ${JSON.stringify(noise)}`)
+  const strict = rules.diffPixels(white, frame(10, 10, () => [245, 250, 255]), 10, 10, 5)
+  expect(strict.changedPixels === 100, `порог 5 не сработал: ${JSON.stringify(strict)}`)
+  expect(rules.diffPixels([], [], 0, 0).changedRatio === 0, 'пустой кадр')
+  expect(rules.captureKey('', '#a') === '*|#a' && rules.captureKey('t1', '') === 't1|', 'ключ снимка')
+  return '0 различий, патч 3×2 → 6%, шум <24 игнорируется, порог настраивается'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 12/12')
+console.log('RULES OK: 13/13')

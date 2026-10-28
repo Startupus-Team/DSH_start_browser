@@ -12,7 +12,7 @@
 
 import type { ElementPick } from './element-refs.ts'
 import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript } from './verify-scripts'
-import { cropRect as clampCropRect, normalizeAddress, normalizeWait, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
+import { captureKey, cropRect as clampCropRect, diffPixels, normalizeAddress, normalizeWait, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
 import { INSTANCE_ID, lastHostRev, note, poll, probe, report, setReportMeta, setTab } from './transport'
@@ -1072,6 +1072,50 @@ async function cropDataUrl(
   return canvas.toDataURL('image/png')
 }
 
+/** Previous screenshot per target (tab + selector), for `ui_screenshot { diff }`. */
+const lastCaptures = new Map<string, string>()
+const MAX_REMEMBERED_CAPTURES = 8
+
+async function decodePixels(dataUrl: string): Promise<{ data: Uint8ClampedArray; width: number; height: number }> {
+  const image = new Image()
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve()
+    image.onerror = () => reject(new Error('E_DIFF_DECODE'))
+    image.src = dataUrl
+  })
+  const canvas = document.createElement('canvas')
+  canvas.width = image.naturalWidth
+  canvas.height = image.naturalHeight
+  const context = canvas.getContext('2d', { willReadFrequently: true })
+  if (context === null) throw new Error('E_DIFF_DECODE')
+  context.drawImage(image, 0, 0)
+  const frame = context.getImageData(0, 0, canvas.width, canvas.height)
+  return { data: frame.data, width: canvas.width, height: canvas.height }
+}
+
+/** Compare a fresh screenshot with the remembered one, then remember the fresh one. */
+async function diffAgainstPrevious(key: string, dataUrl: string, compare: boolean): Promise<Record<string, unknown>> {
+  const previous = lastCaptures.get(key)
+  lastCaptures.delete(key)
+  lastCaptures.set(key, dataUrl)
+  while (lastCaptures.size > MAX_REMEMBERED_CAPTURES) {
+    const oldest = lastCaptures.keys().next().value
+    if (oldest === undefined) break
+    lastCaptures.delete(oldest)
+  }
+  if (!compare) return {}
+  if (previous === undefined) return { hasPrevious: false }
+  try {
+    const [before, after] = await Promise.all([decodePixels(previous), decodePixels(dataUrl)])
+    if (before.width !== after.width || before.height !== after.height) {
+      return { hasPrevious: true, sameSize: false, before: { width: before.width, height: before.height }, after: { width: after.width, height: after.height } }
+    }
+    return { hasPrevious: true, sameSize: true, ...diffPixels(before.data, after.data, after.width, after.height) }
+  } catch (error) {
+    return { hasPrevious: true, error: String(error) }
+  }
+}
+
 /** Capture with a retry and a full-screen fallback cropped by canvas. */
 async function capturePageDataUrl(
   guest: GuestElement,
@@ -1402,6 +1446,11 @@ export function startEngine(): () => void {
                 const base64 = comma > 0 ? dataUrl.slice(comma + 1) : ''
                 const bytes = Math.floor((base64.length * 3) / 4)
                 const size: { width: number; height: number } | undefined = undefined
+                const shotKey = captureKey(typeof command.args.tabId === 'string' ? command.args.tabId : '', selector)
+                // Always remember the shot, so the next `diff: true` call has a baseline.
+                const wantDiff = command.args.diff === true
+                const compared = await diffAgainstPrevious(shotKey, dataUrl, wantDiff)
+                const diff = wantDiff ? compared : undefined
                 const semicolon = dataUrl.indexOf(';')
                 const mime = semicolon > 5 ? dataUrl.slice(5, semicolon) : 'image/png'
                 await report(base as string, {
@@ -1411,6 +1460,7 @@ export function startEngine(): () => void {
                     height: rect?.height ?? size?.height ?? 0,
                     mime,
                     base64,
+                    ...(diff === undefined ? {} : { diff }),
                   },
                 })
                 setStatus(`снимок снят: ${bytes} байт`)
