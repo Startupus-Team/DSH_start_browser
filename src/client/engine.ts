@@ -128,6 +128,16 @@ const listeners = new Set<() => void>()
 const mountedPaneKeys = new Set<string>()
 /** Recent guest losses per tab; survives session replacement (a storm resets sessions). */
 const recoveryLedger = new Map<string, number[]>()
+/** Tabs whose guest creation waits for the pane to become visible. */
+const deferredCreate = new Map<string, { url: string; host: HTMLElement | null }>()
+
+/** Is the pane actually laid out (the kernel only attaches guests to visible panes)? */
+function hostVisible(host: HTMLElement | null): boolean {
+  if (host === null || !host.isConnected) return false
+  const rect = host.getBoundingClientRect()
+  return rect.width > 1 && rect.height > 1
+}
+
 /** Tabs with a rebuild in flight: two panels must not rebuild the same tab. */
 const recovering = new Set<string>()
 
@@ -676,6 +686,24 @@ export async function showSession(tabId: string, initialUrl: string, host: HTMLE
     notify()
     return
   }
+  // The kernel attaches a guest only while its pane is laid out. Creating one for a
+  // hidden tab produced `attachFailures` and no `dom-ready`, so wait for the layout
+  // and defer the rest until the tab is shown.
+  if (host !== null) {
+    let visible = hostVisible(host)
+    for (let waited = 0; !visible && waited < 600; waited += 100) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      visible = hostVisible(host)
+    }
+    if (!visible) {
+      deferredCreate.set(tabId, { url: initialUrl, host })
+      setStatus('вкладка скрыта: страница создастся, когда её покажут')
+      notify()
+      return
+    }
+  }
+  deferredCreate.delete(tabId)
+
   const known = sessions.get(tabId)
   if (known !== undefined && !known.container.isConnected) {
     // The pane DOM was replaced (plugin reload, remount): the guest inside the
