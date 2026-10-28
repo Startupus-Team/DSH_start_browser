@@ -3021,6 +3021,15 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     if (!brokenMessage.includes('E_NO_EFFECT') || !brokenMessage.includes('bad selector')) throw new Error(`битый селектор: ${brokenMessage}`)
     commands.length = 0
 
+    const aborting = call('ui_wait', { selector: '#never', timeoutMs: 30000 }) as Promise<unknown>
+    await send({ waitResult: { met: false, timedOut: false, aborted: 'human', waitedMs: 800, detail: {}, at: Date.now() } })
+    await rejects('E_HUMAN_CONTROL', () => aborting)
+    commands.length = 0
+    const closing = call('ui_wait', { text: 'x' }) as Promise<unknown>
+    await send({ waitResult: { met: false, timedOut: false, aborted: 'closed', waitedMs: 300, detail: {}, at: Date.now() } })
+    await rejects('E_GUEST_GONE', () => closing)
+    commands.length = 0
+    await rejects('E_NO_EFFECT', () => call('ui_viewport', { width: 390, tabId: 'tab-2' }))
     await rejects('E_NO_EFFECT', () => call('ui_viewport', { colorScheme: 'sepia' }))
     await rejects('E_NO_EFFECT', () => call('ui_viewport', { colorScheme: 'dark', zoom: 1.5 }))
     if (commands.length !== 0) throw new Error('невалидная тема поставила команду')
