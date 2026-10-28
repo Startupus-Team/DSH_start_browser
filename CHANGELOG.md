@@ -1,5 +1,19 @@
 # Changelog — startapus-browser
 
+## 0.24.2
+
+### Исправлено
+
+- `scripts/live-check.mjs` вызывает `/selftest` и `/panic` через `POST` (маршруты стали POST-only
+  из-за origin/method гейта), поэтому `npm run live` снова проходит и проверяет живой процесс.
+
+### Подтверждено вживую
+
+- `shortcutState: { id: "startapus-browser.new", keys: "Cmd+T", ok: true }` — каталог ядра принял
+  комбинацию, подсказка у карточки рисуется справа (не текстом).
+- `revMatch: true`, `clientRev == buildRev`; появились `panelMounts`, `counters.navigations`,
+  `counters.loadErrors`.
+
 ## 0.24.1 — процесс
 
 ### Добавлено

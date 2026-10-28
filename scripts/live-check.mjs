@@ -44,10 +44,19 @@ if (port === null) {
 }
 console.log(`port: ${port}`)
 
-async function get(path) {
-  const response = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(5000) })
+async function request(path, method = 'GET') {
+  const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method,
+    headers: method === 'POST' ? { 'x-startapus-client': '1' } : undefined,
+    signal: AbortSignal.timeout(15000),
+  })
   const text = await response.text()
   return { status: response.status, body: text === '' ? null : JSON.parse(text) }
+}
+
+/** The plugin's mutating routes are POST-only (origin/method gate). */
+async function get(path) {
+  return request(path, path.endsWith('/selftest') || path.endsWith('/panic') ? 'POST' : 'GET')
 }
 
 let failed = 0
