@@ -393,6 +393,14 @@ export function restoreCrashedTab(tabId: string): boolean {
   return true
 }
 
+/** Address the pane should show (typed target first, then the pane's default). */
+export function desiredUrlFor(tabId: string): string | null {
+  const requested = requestedUrl.get(tabId)
+  if (requested !== undefined) return requested
+  const state = paneState.get(tabId)
+  return state === undefined ? null : state.url
+}
+
 /** Crash info for one tab (used by the panel's restore chip). */
 export function crashedInfo(tabId: string): { url: string; reason: string; at: number } | null {
   return crashedTabs.get(tabId) ?? null
@@ -861,7 +869,16 @@ export async function showSession(tabId: string, initialUrl: string, host: HTMLE
       visible = hostVisible(host)
     }
     if (!visible) {
-      setStatus('вкладка скрыта: страница создастся, когда её покажут')
+      const trace: string[] = []
+      let cursor: HTMLElement | null = host
+      for (let depth = 0; cursor !== null && depth < 6; depth += 1) {
+        const box = typeof cursor.getBoundingClientRect === 'function' ? cursor.getBoundingClientRect() : null
+        const style = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(cursor) : null
+        trace.push(`${cursor.tagName.toLowerCase()}${cursor.id === '' ? '' : `#${cursor.id}`}(${box === null ? '?' : `${Math.round(box.width)}x${Math.round(box.height)}`},${style?.display ?? '?'})`)
+        cursor = (cursor.parentElement ?? null) as HTMLElement | null
+      }
+      setStatus(`вкладка скрыта: страница создастся, когда её покажут · ${trace.join(' < ')}`)
+      void note('pane:hidden', { tabId, trace })
       notify()
       return
     }

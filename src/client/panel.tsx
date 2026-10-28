@@ -33,6 +33,7 @@ import {
   runInActive,
   setEvidence,
   setPaneState,
+  desiredUrlFor,
   restoreCrashedTab,
   crashedInfo,
   setSessionRect,
@@ -235,7 +236,11 @@ function PanelChrome(props: PanelProps): React.ReactNode {
 
   // Focused: exactly what the user typed (so the field can be cleared).
   // Not focused: the page address, with unsent input as a fallback.
-  const address = editing ? draft : (snapshot.url === '' ? draft : snapshot.url)
+  // With no page yet the field still shows the intended address instead of a
+  // placeholder, and focusing it no longer wipes what the user was looking at.
+  const desired = desiredUrlFor(tabKey) ?? ''
+  const shownUrl = snapshot.url !== '' ? snapshot.url : desired
+  const address = editing ? draft : (shownUrl === '' ? draft : shownUrl)
 
   return (
     <div className="dsh-startapus-browser">
@@ -250,7 +255,7 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           placeholder="https://…"
           onChange={(event) => setDraft(event.target.value)}
           onFocus={(event) => {
-            setDraft(snapshot.url)
+            setDraft(shownUrl)
             setEditing(true)
             event.currentTarget.select()
           }}
