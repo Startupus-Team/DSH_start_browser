@@ -114,6 +114,8 @@ let lastNavAttempt: { url: string; ok: boolean; reason: string; hasGuest: boolea
 const listeners = new Set<() => void>()
 /** Panes currently mounted, by tab key (double mounts do not inflate the count). */
 const mountedPaneKeys = new Set<string>()
+/** How many times a pane was mounted — a remount is what reloads a page. */
+let panelMounts = 0
 
 /** Read the browser bridge exposed by the DSH desktop preload. */
 function browserBridge(): DesktopBridge | undefined {
@@ -124,6 +126,7 @@ function browserBridge(): DesktopBridge | undefined {
 /** Current engine snapshot for views. */
 /** Register a mounted pane (called by the view on mount/unmount). */
 export function notePanelMounted(tabKey: string): void {
+  if (!mountedPaneKeys.has(tabKey)) panelMounts += 1
   mountedPaneKeys.add(tabKey)
   notify()
 }
@@ -1183,6 +1186,7 @@ export function startEngine(): void {
         lastNavAttempt,
         shortcutState,
         clientRev: CLIENT_REV,
+        panelMounts,
         lastLoadError,
         control: controlHolder,
         agentActive: Date.now() < agentActiveUntil,

@@ -16,6 +16,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 
+import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -90,6 +91,7 @@ interface ClientState {
   network: Record<string, unknown> | null
   inspect: Record<string, unknown> | null
   clientRev: string
+  panelMounts: number
   lastLoadError: Record<string, unknown> | null
   control: 'agent' | 'human' | null
   agentActive: boolean
@@ -98,7 +100,7 @@ interface ClientState {
   lastCommand: { id: string; kind: string; at: number } | null
   captureError: string | null
   hidden: boolean
-  counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number }
+  counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number; navigations: number; loadErrors: number }
 }
 
 /** One review task. */
@@ -157,6 +159,13 @@ const TEXT_OUTPUT: Record<string, unknown> = {
 }
 
 /** Feature stamps so a stale host build is detectable from `/health`. */
+/** Read through the untrusted envelope (used by tools and by tests). */
+function unwrap<T = Record<string, unknown>>(value: unknown): T {
+  const box = value as { data?: unknown } | null
+  return (box !== null && box !== undefined && box.data !== undefined ? box.data : value) as T
+}
+
+
 const CAPABILITIES = [
   'text-output',
   'dedupe',
@@ -251,13 +260,15 @@ const approvedOrigins = new Set<string>()
 
 /** Counters summed over every known tab. */
 function totals(): ClientState['counters'] {
-  const sum = { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0 }
+  const sum = { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0 }
   for (const state of tabState.values()) {
     sum.acquires += state.counters.acquires
     sum.releases += state.counters.releases
     sum.attachFailures += state.counters.attachFailures
     sum.recoveries += state.counters.recoveries
     sum.panics += state.counters.panics
+    sum.navigations += state.counters.navigations ?? 0
+    sum.loadErrors += state.counters.loadErrors ?? 0
   }
   return sum
 }
@@ -300,6 +311,7 @@ function blankClient(): ClientState {
   network: null,
   inspect: null,
   clientRev: '',
+  panelMounts: 0,
   lastLoadError: null,
   control: null,
   agentActive: false,
@@ -308,7 +320,7 @@ function blankClient(): ClientState {
   lastCommand: null,
   captureError: null,
   hidden: false,
-    counters: { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0 },
+    counters: { acquires: 0, releases: 0, attachFailures: 0, recoveries: 0, panics: 0, navigations: 0, loadErrors: 0 },
   }
 }
 
@@ -838,7 +850,7 @@ function runSelfTest(): Record<string, unknown> {
           { ref: 'ref_3', role: 'link', tag: 'a', name: 'Ещё', selector: 'a.more', visible: true },
         ],
       }
-      const found = tool('ui_find')({ query: 'найти' }) as { matches: number; items: Array<{ ref: string }> }
+      const found = unwrap<{ matches: number; items: Array<{ ref: string }> }>(tool('ui_find')({ query: 'найти' }))
       if (found.matches !== 1 || found.items[0]?.ref !== 'ref_2') throw new Error(`поиск вернул ${JSON.stringify(found)}`)
       return 'ui_find: «найти» → ref_2; без обзора — E_NO_COVERAGE'
     } finally {
@@ -888,9 +900,22 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
   const method = request.method ?? 'GET'
   const path = (request.url ?? '').split('?')[0] ?? ''
 
+  const origin = String((req as { headers?: Record<string, string> }).headers?.origin ?? '')
+  ;(res as { __origin?: string }).__origin = origin
+  const mutating = path.endsWith('/client/poll') || path.endsWith('/client/event') || path.endsWith('/panic') || path.endsWith('/selftest')
+
   try {
     if (method === 'OPTIONS') {
       sendJson(res, 200, { ok: true })
+      return
+    }
+
+    if (mutating && !isTrustedOrigin(origin)) {
+      sendJson(res, 403, { ok: false, error: 'E_ORIGIN_FORBIDDEN: веб-страница не может управлять браузером' })
+      return
+    }
+    if (mutating && method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'E_METHOD: только POST' })
       return
     }
 
@@ -934,12 +959,13 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         buildRev: BUILD_REV,
         clientRev: client.clientRev === '' ? null : client.clientRev,
         lastLoadError: client.lastLoadError,
+        panelMounts: client.panelMounts,
         revMatch: client.clientRev === '' ? null : client.clientRev === BUILD_REV,
         activeTab: client.engineActive,
         targetTab: client.engineActive,
         tabs: client.sessions.length,
         counters: totals(),
-        sessions: client.sessions,
+        sessionsCount: client.sessions.length,
         panels: client.panels,
         focusTabResult: client.focusTabResult,
         panes: client.panes,
@@ -956,7 +982,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         queued: commands.length,
         tasks: tasks.size,
         stage: client.stage,
-        url: client.url,
+        urlHost: (() => { try { return client.url === '' ? null : new URL(client.url).host } catch { return null } })(),
         panelStatus: client.panelStatus,
         hasGuest: client.hasGuest,
       })
@@ -1044,6 +1070,7 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           probe(`${field}:done`, { at: (value as { at?: number }).at ?? Date.now() })
         }
       }
+      if (typeof body.panelMounts === 'number') client.panelMounts = body.panelMounts
       if (typeof body.lastLoadError === 'object' && body.lastLoadError !== null) {
         client.lastLoadError = body.lastLoadError as Record<string, unknown>
         probe('load:error', client.lastLoadError)
@@ -1263,6 +1290,18 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
   }
 }
 
+/** Origin our own renderer uses (Electron custom scheme or file). */
+function isTrustedOrigin(origin: string): boolean {
+  if (origin === '') return true // curl/scripts, not a browser page
+  return origin === 'dsh-app://app' || origin.startsWith('file://') || origin.startsWith('dsh-app://')
+}
+
+/** CORS answer: never `*`, only the renderer we trust. */
+function allowedOrigin(res: unknown): string {
+  const box = res as { __origin?: string }
+  return isTrustedOrigin(box.__origin ?? '') ? (box.__origin === '' ? 'dsh-app://app' : box.__origin) : 'dsh-app://app'
+}
+
 /** Loopback, private, link-local and metadata endpoints are never opened by the agent. */
 function isPrivateHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
@@ -1467,6 +1506,12 @@ function fail(code: string, message: string, hint?: string): never {
   throw error
 }
 
+/** Wrap page-derived data: the model must treat it as data, never instructions. */
+function untrusted<T>(data: T, source = 'page'): { trust: { untrusted: true; source: string; hash: string }; data: T } {
+  const hash = createHash('sha256').update(JSON.stringify(data)).digest('hex').slice(0, 8)
+  return { trust: { untrusted: true, source, hash }, data }
+}
+
 /** Wait until the renderer reports a fresh value for a page field. */
 async function waitForField(field: 'pageText' | 'network' | 'inspect', since: number, timeoutMs = 4000): Promise<Record<string, unknown>> {
   for (let waited = 0; waited < timeoutMs; waited += 100) {
@@ -1518,7 +1563,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
           if (levelName === 'info') return level === 1
           return level === 0
         }).slice(-limit)
-        return { total: client.console.length, matched: rows.length, entries: rows }
+        return untrusted({ total: client.console.length, matched: rows.length, entries: rows }, 'console')
       },
     },
     {
@@ -1857,7 +1902,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
           const haystack = `${String(item.role ?? '')} ${String(item.name ?? '')} ${String(item.tag ?? '')} ${String(item.selector ?? '')}`.toLowerCase()
           return haystack.includes(query)
         }).slice(0, limit)
-        return { url: scan.url, scanned: scan.total, matches: rows.length, items: rows }
+        return untrusted({ url: scan.url, scanned: scan.total, matches: rows.length, items: rows })
       },
     },
     {
@@ -1875,7 +1920,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         const since = Date.now()
         const command = enqueue('page_text', { ...(tabId === '' ? {} : { tabId }), limit })
         const text = await waitForField('pageText', since)
-        return { url: text.url ?? null, title: text.title ?? null, text: text.text ?? '', truncated: text.truncated === true, commandId: command.id }
+        return untrusted({ url: text.url ?? null, title: text.title ?? null, text: text.text ?? '', truncated: text.truncated === true, commandId: command.id })
       },
     },
     {
@@ -1893,7 +1938,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         const since = Date.now()
         const command = enqueue('network', { ...(tabId === '' ? {} : { tabId }), limit })
         const result = await waitForField('network', since)
-        return { total: result.total ?? 0, slow: result.slow ?? 0, heavy: result.heavy ?? 0, entries: result.entries ?? [], commandId: command.id }
+        return untrusted({ total: result.total ?? 0, slow: result.slow ?? 0, heavy: result.heavy ?? 0, entries: result.entries ?? [], commandId: command.id }, 'network')
       },
     },
     {
@@ -1914,7 +1959,7 @@ async function waitForField(field: 'pageText' | 'network' | 'inspect', since: nu
         const since = Date.now()
         const command = enqueue('inspect', { ...(tabId === '' ? {} : { tabId }), selector, styles })
         const result = await waitForField('inspect', since)
-        return { ...result, commandId: command.id }
+        return untrusted({ ...result, commandId: command.id }, 'inspect')
       },
     },
     {
@@ -2595,7 +2640,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
 
     const savedConsole = client.console
     client.console = Array.from({ length: 300 }, (_row, index) => ({ level: 0, message: `line-${index}` }))
-    const deep = call('ui_console', {}) as { total: number; matched: number }
+    const deep = unwrap<{ total: number; matched: number }>(call('ui_console', {}))
     client.console = savedConsole
     if (deep.matched !== 200) throw new Error(`ui_console вернул ${deep.matched}, ожидалось 200`)
     results.push({ name: 'P2-1: адресация вкладки и консоль 200 строк', pass: true, detail: 'capture/select несут tabId; console=200' })
@@ -2616,7 +2661,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     await handleRoute(fakeRequest({
       inspect: { status: 'OK', selector: '#card', styles: { color: 'rgb(1, 2, 3)', gap: '8px' }, at: Date.now() },
     }, 'POST', '/startapus-browser/client/event'), reply.res)
-    const result = await pending as { status?: string; styles?: Record<string, string> }
+    const result = unwrap<{ status?: string; styles?: Record<string, string> }>(await pending)
     if (result.status !== 'OK' || result.styles?.color !== 'rgb(1, 2, 3)') {
       throw new Error(`inspect вернул ${JSON.stringify(result)}`)
     }
@@ -2629,7 +2674,7 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     await handleRoute(fakeRequest({
       pageText: { status: 'OK', url: 'https://x.test/', title: 'X', text: 'hello world', truncated: false, at: Date.now() },
     }, 'POST', '/startapus-browser/client/event'), textReply.res)
-    const text = await textPending
+    const text = unwrap<{ text?: string }>(await textPending)
     if (text.text !== 'hello world') throw new Error(`page_text вернул ${JSON.stringify(text)}`)
     results.push({ name: 'P2-2: inspect и page_text возвращают результат', pass: true, detail: 'inspect styles + page_text text' })
   } catch (error) {
@@ -2666,6 +2711,35 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
   } catch (error) {
     client.control = null
     results.push({ name: 'P2-3: типизированные отказы с подсказкой', pass: false, detail: String(error) })
+  }
+
+  // Security: foreign web pages and wrong methods cannot drive the browser.
+  try {
+    seedTransport()
+    const evil = fakeRequest({ tabKey: 'startapus-browser' }, 'POST', '/startapus-browser/client/poll')
+    ;(evil as { headers: Record<string, string> }).headers = { 'x-startapus-client': '1', origin: 'https://evil.example' }
+    const evilResponse = fakeResponse()
+    await handleRoute(evil, evilResponse.res)
+    if (evilResponse.read().code !== 403) throw new Error(`чужой Origin получил ${evilResponse.read().code}`)
+
+    const get = fakeRequest({}, 'GET', '/startapus-browser/panic')
+    const getResponse = fakeResponse()
+    await handleRoute(get, getResponse.res)
+    if (getResponse.read().code !== 405) throw new Error(`GET /panic получил ${getResponse.read().code}`)
+
+    const post = fakeRequest({}, 'POST', '/startapus-browser/panic')
+    const postResponse = fakeResponse()
+    await handleRoute(post, postResponse.res)
+    if (postResponse.read().code !== 200) throw new Error(`POST /panic получил ${postResponse.read().code}`)
+
+    const health = fakeResponse()
+    await handleRoute(fakeRequest({}, 'GET', '/startapus-browser/health'), health.res)
+    const body = health.read().body as { sessions?: unknown; sessionsCount?: number; url?: unknown }
+    if (body.sessions !== undefined) throw new Error('/health всё ещё отдаёт список сессий')
+    if (body.url !== undefined) throw new Error('/health всё ещё отдаёт URL страницы')
+    results.push({ name: 'SEC-2: чужие Origin/методы не управляют браузером', pass: true, detail: '403 на чужой Origin, 405 на GET, /health без sessions/url' })
+  } catch (error) {
+    results.push({ name: 'SEC-2: чужие Origin/методы не управляют браузером', pass: false, detail: String(error) })
   }
 
   // Human control blocks agent mutations.

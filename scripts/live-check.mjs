@@ -74,7 +74,7 @@ if (missing.length > 0) {
 } else if (revFresh) {
   console.log('FRESH  сборка совпадает с исходниками (rev)')
 }
-console.log(`transport: ${String(health.body?.transport)} · stage: ${String(health.body?.stage)} · url: ${String(health.body?.url)}`)
+console.log(`transport: ${String(health.body?.transport)} · stage: ${String(health.body?.stage)} · host: ${String(health.body?.urlHost)}`)
 if (health.body?.revMatch === false) {
   console.log(`FAIL  клиент прислал другой отпечаток сборки: ${String(health.body?.clientRev ?? 'нет')} ≠ ${expectedRev}`)
   failed += 1

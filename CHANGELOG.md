@@ -1,5 +1,24 @@
 # Changelog — startapus-browser
 
+## 0.23.0 — фаза 3: безопасность маршрутов и данных
+
+### Добавлено
+
+- **Origin-гейт на изменяющих маршрутах:** `/client/poll`, `/client/event`, `/panic`, `/selftest`
+  отклоняют запросы с чужим веб-Origin (`403 E_ORIGIN_FORBIDDEN`) и требуют `POST` (`405`).
+  Браузерная страница больше не может управлять панелью через localhost.
+- **CORS без `*`:** заголовок отдаётся только доверенному origin рендерера.
+- **`/health` без приватных данных:** вместо списка сессий и URL — `sessionsCount` и `urlHost`.
+- **Untrusted-конверт** для page-derived данных: `ui_read_page`, `ui_find`, `ui_console`,
+  `ui_page_text`, `ui_network`, `ui_inspect`, `ui_guest_state` возвращают
+  `{ trust: { untrusted, source, hash }, data }`.
+- **Счётчики перезагрузок:** `panelMounts` (сколько раз монтировалась панель) и
+  `counters.navigations`/`loadErrors` — теперь видно, кто инициирует перезагрузку.
+
+### Проверки
+
+`SEC-2` (403/405), `selftest 51/51`, `TOOLS 29`, `ENGINE 13/13`.
+
 ## 0.22.2
 
 ### Исправлено
