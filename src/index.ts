@@ -1110,6 +1110,9 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           probe('client:instance', { instanceId: body.instanceId, attached: body.attached === true, known: clientInstances.size })
         }
       }
+      // Explicit "no page"/"hidden" reports never own the shared state; anything else
+      // (older clients, tests) is accepted for compatibility.
+      const ownsPage = !(body.attached === false || body.visible === false)
       const notePayload = body.note as { name?: string; data?: Record<string, unknown>; at?: number } | undefined
       if (notePayload !== undefined && typeof notePayload.name === 'string') {
         probe(notePayload.name, notePayload.data ?? {})
@@ -1264,6 +1267,12 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
           message: typeof result.message === 'string' ? result.message : '',
         }
         probe('act:done', client.lastAct)
+      }
+      if (!ownsPage) {
+        // A stale bundle still polls; it must not overwrite the live page state
+        // (that made ui_tabs empty while a page was clearly on screen).
+        sendJson(res, 200, { ok: true })
+        return
       }
       if (typeof body.hidden === 'boolean') client.hidden = body.hidden
       if (typeof body.counters === 'object' && body.counters !== null) {
