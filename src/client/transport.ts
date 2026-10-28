@@ -87,6 +87,21 @@ export async function poll(base: string): Promise<BridgeCommand | null> {
   }
 }
 
+/** Send a named diagnostic note to the host log (`apply:probe` style). */
+export async function note(name: string, data: Record<string, unknown> = {}): Promise<void> {
+  const base = await probe()
+  if (base === null) return
+  try {
+    await fetch(`${base}/startapus-browser/client/event`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'content-type': 'application/json' },
+      body: JSON.stringify({ note: { name, data, at: Date.now() } }),
+    })
+  } catch {
+    // diagnostics must never break the panel
+  }
+}
+
 /** Report panel state and evidence back to the host half. */
 export async function report(base: string, payload: Record<string, unknown>): Promise<void> {
   try {

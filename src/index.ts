@@ -1064,6 +1064,10 @@ async function handleRoute(req: unknown, res: unknown): Promise<void> {
         probe('focustab:done', client.focusTabResult)
       }
       if (typeof body.panels === 'number') client.panels = body.panels
+      const notePayload = body.note as { name?: string; data?: Record<string, unknown>; at?: number } | undefined
+      if (notePayload !== undefined && typeof notePayload.name === 'string') {
+        probe(notePayload.name, notePayload.data ?? {})
+      }
       for (const field of ['pageText', 'network', 'inspect'] as const) {
         const value = (body as Record<string, unknown>)[field]
         if (typeof value === 'object' && value !== null) {

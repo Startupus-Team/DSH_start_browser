@@ -15,7 +15,7 @@ import { actScript, coverageScript, evidenceScript, inspectScript, measureScript
 import { cropRect as clampCropRect, normalizeAddress, pickSessionToEvict, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
-import { lastHostRev, poll, probe, report, setTab } from './transport'
+import { lastHostRev, note, poll, probe, report, setTab } from './transport'
 
 /** A webview element plus the Electron methods we call. */
 export interface GuestElement extends HTMLElement {
@@ -452,7 +452,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     counters.acquires += 1
     setStatus('запрос резервации guest…')
     const reservation = await bridge.acquire(WORKSPACE_KEY)
-    probe('lease:acquire', { tabId, lease: reservation.lease.slice(0, 12) })
+    void note('lease:acquire', { tabId, lease: reservation.lease.slice(0, 12) })
     session.lease = reservation.lease
     setStatus(`резервация ok · partition ${reservation.partition}`)
     void report(base ?? (await probe()) ?? '', {}).catch(() => undefined)
@@ -536,6 +536,25 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
       if (session.ready || session.guest === null) return
       counters.attachFailures += 1
       setStatus('guest не подключился: ядро отклонило attach')
+      const chain: Array<Record<string, unknown>> = []
+      let node: HTMLElement | null = host
+      while (node !== null && chain.length < 8) {
+        chain.push({
+          tag: node.tagName.toLowerCase(),
+          id: node.id,
+          cls: String(node.className).slice(0, 80),
+          dataset: JSON.stringify(node.dataset).slice(0, 200),
+          rect: (() => { const r = node.getBoundingClientRect(); return `${Math.round(r.width)}x${Math.round(r.height)}` })(),
+        })
+        node = node.parentElement
+      }
+      void note('attach:timeout', {
+        tabId,
+        lease: session.lease === null ? '' : session.lease.slice(0, 12),
+        connected: created.isConnected,
+        url: created.getURL?.() ?? '',
+        chain,
+      })
     }, 4000)
 
     return session
@@ -571,7 +590,7 @@ function handleGuestLoss(session: Session, kind: string): void {
       // already gone
     }
     setStatus(`рендерер упал (${kind}) — вкладка закрыта, откройте её заново ⌘T`)
-    probe('guest:crashed', { tabId: session.tabId, kind, url: session.url.slice(0, 120) })
+    void note('guest:crashed', { tabId: session.tabId, kind, url: session.url.slice(0, 120) })
     notify()
     return
   }
@@ -610,7 +629,7 @@ function handleGuestLoss(session: Session, kind: string): void {
   notify()
   const host = session.host
   const url = session.url.startsWith('about:blank') ? START_URL : session.url
-  probe('guest:lost', {
+  void note('guest:lost', {
     tabId: session.tabId,
     kind,
     attempt: session.recoveryAttempts,
@@ -798,7 +817,7 @@ function releaseLease(session: Session): void {
   const lease = session.lease
   session.lease = null
   counters.releases += 1
-  probe('lease:release', { tabId: session.tabId, lease: lease.slice(0, 12), reason: session.ready ? 'close' : 'lost' })
+  void note('lease:release', { tabId: session.tabId, lease: lease.slice(0, 12), reason: session.ready ? 'close' : 'lost' })
   const bridge = browserBridge()
   if (bridge !== undefined) void bridge.release(lease).catch(() => undefined)
 }
