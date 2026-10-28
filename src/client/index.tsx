@@ -122,8 +122,9 @@ export function apply(ctx: ClientContext): void {
     // optional
   }
 
-  // Cmd+B (Ctrl+B on other platforms) opens the browser tab. The catalog row
-  // makes the sequence discoverable; the listener is the actual handler.
+  // Cmd+T (Ctrl+T elsewhere) opens the browser tab: the sequence was freed by
+  // disabling the built-in browser. The catalog row makes it discoverable; the
+  // listener is the actual handler.
   try {
     const shortcuts = ctx.get('shortcuts') as {
       registerFixed?: (command: {
@@ -137,8 +138,8 @@ export function apply(ctx: ClientContext): void {
     shortcuts?.registerFixed?.({
       id: 'startapus-browser.open',
       label: () => 'Открыть Startapus Browser',
-      keys: ['Cmd+B'],
-      bindings: [{ code: 'KeyB', modifiers: ['Meta'] }],
+      keys: ['Cmd+T'],
+      bindings: [{ code: 'KeyT', modifiers: ['Meta'] }],
       group: 'application',
     })
   } catch {
@@ -149,7 +150,7 @@ export function apply(ctx: ClientContext): void {
     const onKeyDown = (event: KeyboardEvent): void => {
       const modifier = event.metaKey || event.ctrlKey
       if (!modifier || event.altKey || event.shiftKey) return
-      if (event.key.toLowerCase() !== 'b') return
+      if (event.key.toLowerCase() !== 't') return
       const target = event.target as HTMLElement | null
       const tag = target?.tagName?.toLowerCase() ?? ''
       if (tag === 'input' || tag === 'textarea' || target?.isContentEditable === true) return
