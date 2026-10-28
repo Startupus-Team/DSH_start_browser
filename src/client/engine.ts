@@ -12,7 +12,7 @@
 
 import type { ElementPick } from './element-refs.ts'
 import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript, netHookScript } from './verify-scripts'
-import { captureKey, cropRect as clampCropRect, diffPixels, normalizeAddress, normalizeWait, pickSessionToEvict, rememberedScheme, verifyNeedsReload, verifySettleMs } from './rules'
+import { captureKey, cropRect as clampCropRect, diffPixels, normalizeAddress, jsTimeoutMs, normalizeWait, pickSessionToEvict, rememberedScheme, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
 import { INSTANCE_ID, lastHostRev, note, poll, probe, report, setReportMeta, setTab } from './transport'
@@ -1743,13 +1743,18 @@ export function startEngine(): () => void {
           if (view === null || view.executeJavaScript === undefined) {
             await report(base as string, { jsResult: { error: 'E_GUEST_GONE: гость вкладки не создан (пересоздайте вкладку)', at: Date.now() } })
           } else {
+            // A long script blocks this loop, so keep telling the host the panel is alive.
+            const beat = window.setInterval(() => void report(base as string, {}).catch(() => undefined), 4000)
             try {
-              const raw = await withTimeout(view.executeJavaScript(jsScript(code), false), 8000, 'E_TIMEOUT')
+              const runMs = jsTimeoutMs(command.args.timeoutMs)
+              const raw = await withTimeout(view.executeJavaScript(jsScript(code), false), runMs, `E_TIMEOUT: скрипт не завершился за ${runMs / 1000} с (он продолжает выполняться в странице; увеличьте timeoutMs)`)
               const parsed = typeof raw === 'string' ? JSON.parse(raw) as { status?: string; json?: string; truncated?: boolean; message?: string } : {}
               if (parsed.status === 'OK') await report(base as string, { jsResult: { status: 'OK', json: parsed.json ?? 'null', truncated: parsed.truncated === true, at: Date.now() } })
               else await report(base as string, { jsResult: { status: 'ERROR', message: String(parsed.message ?? 'ошибка выполнения'), at: Date.now() } })
             } catch (error) {
               await report(base as string, { jsResult: { status: 'ERROR', message: String(error), at: Date.now() } })
+            } finally {
+              window.clearInterval(beat)
             }
           }
         } else if (command.kind === 'color_scheme') {

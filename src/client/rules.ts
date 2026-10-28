@@ -205,3 +205,13 @@ export function actNeedsTarget(op: string): boolean {
 }
 
 export const NAV_ACTIONS = ['back', 'forward', 'reload'] as const
+
+/** Longest a `ui_js` script may run; the host adds the guest-ready and poll slack on top. */
+export const JS_TIMEOUT_DEFAULT_MS = 8_000
+export const JS_TIMEOUT_MAX_MS = 60_000
+
+/** Clamp the script run time requested by the agent. */
+export function jsTimeoutMs(value: unknown): number {
+  const asked = typeof value === 'number' && Number.isFinite(value) ? Math.round(value) : JS_TIMEOUT_DEFAULT_MS
+  return Math.min(JS_TIMEOUT_MAX_MS, Math.max(1_000, asked))
+}

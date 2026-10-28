@@ -22,7 +22,7 @@ import { homedir, tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
 import { imageSize } from './image-size'
-import { ACT_OPS, COLOR_SCHEMES, NAV_ACTIONS, actNeedsTarget, normalizeWait } from './client/rules'
+import { ACT_OPS, COLOR_SCHEMES, NAV_ACTIONS, actNeedsTarget, jsTimeoutMs, normalizeWait } from './client/rules'
 
 /** Append one diagnostic line; host registration must be observable without DevTools. */
 function probe(event: string, data: Record<string, unknown> = {}): void {
@@ -53,8 +53,11 @@ export interface Config {
   startUrl?: string
   /** Whether arbitrary http(s) sites are allowed (default true). */
   allowArbitrarySites?: boolean
-  /** Also register the 35 original single-purpose tool names (default false: the consolidated surface). */
-  legacyToolNames?: boolean
+  /**
+   * Old single-purpose tool names: `'aliases'` (default) keeps thin deprecated aliases that delegate to the
+   * consolidated tools, `true` registers the 35 originals in full, `false` hides them (the 21 consolidated tools only).
+   */
+  legacyToolNames?: boolean | 'aliases'
 }
 
 /** One queued renderer command. */
@@ -2323,6 +2326,7 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
       parameters: objectSchema({
         code: { type: 'string', description: 'Тело async-функции, до 4000 символов; например: return document.title' },
         confirmOrigin: { type: 'boolean', description: 'Подтвердить первый скрипт на этом домене (доступ к данным страницы)' },
+        timeoutMs: { type: 'number', description: 'Сколько скрипт может выполняться, 1000–60000 мс (по умолчанию 8000); для долгих самотестов страницы' },
         tabId: tabIdParam,
       }, ['code']),
       output: output(asText),
@@ -2356,8 +2360,10 @@ async function applyColorScheme(mode: string, tabId: string): Promise<Record<str
         approvedOrigins.add(origin)
         const tabId = String(args.tabId ?? '')
         const since = Date.now()
-        const command = enqueue('js', { ...(tabId === '' ? {} : { tabId }), code })
-        const result = await waitForField('jsResult', since, 14_000)
+        const runMs = jsTimeoutMs(args.timeoutMs)
+        const command = enqueue('js', { ...(tabId === '' ? {} : { tabId }), code, timeoutMs: runMs })
+        // The panel may spend 3 s getting the guest ready and sees the command on its next poll (≤2.5 s).
+        const result = await waitForField('jsResult', since, runMs + 8_000)
         if (result.status === 'ERROR') throw new Error(`E_JS: ${String(result.message ?? 'ошибка выполнения')}`)
         let value: unknown = null
         try {
@@ -2676,9 +2682,9 @@ function parseText(result: { text: string }): Record<string, unknown> {
  * consolidated tool delegates to the original, so rate limits, gates and
  * errors are unchanged; the originals stay reachable with `legacyToolNames`.
  */
-export function exposedToolSurface(legacyNames = false): Array<Record<string, unknown>> {
+export function exposedToolSurface(legacyNames: boolean | 'aliases' = false): Array<Record<string, unknown>> {
   const full = toolSurface() as SurfaceTool[]
-  if (legacyNames) return full
+  if (legacyNames === true) return full
   const byName = new Map(full.map((tool) => [tool.name, tool]))
   const use = (name: string): SurfaceTool => {
     const found = byName.get(name)
@@ -2816,7 +2822,57 @@ export function exposedToolSurface(legacyNames = false): Array<Record<string, un
 
   const replaced = new Set(composites.map((tool) => tool.name))
   const kept = full.filter((tool) => !FOLDED_TOOLS.has(tool.name) && !replaced.has(tool.name))
-  return [...kept, ...composites]
+  const surface = [...kept, ...composites]
+  if (legacyNames !== 'aliases') return surface
+
+  // Thin deprecated aliases: an agent that still knows the old names keeps working and is told the new one.
+  const aliases: SurfaceTool[] = []
+  for (const [oldName, hint] of Object.entries(ALIAS_HINTS)) {
+    const original = byName.get(oldName)
+    if (original === undefined) continue
+    aliases.push({
+      name: oldName,
+      description: `Устарел, используйте ${hint}.`,
+      parameters: stripDescriptions(original.parameters),
+      output: TEXT_OUTPUT,
+      execute: async (args, exec) => {
+        const result = await original.execute(args, exec)
+        return { text: JSON.stringify({ ...parseText(result), deprecated: `используйте ${hint}` }, null, 1) }
+      },
+    })
+  }
+  return [...surface, ...aliases]
+}
+
+/** Old name → what replaces it (shown to the agent in the alias description and every alias result). */
+const ALIAS_HINTS: Record<string, string> = {
+  ui_tabs: 'ui_tab (action=list)',
+  ui_new_tab: 'ui_tab (action=new)',
+  ui_close_tab: 'ui_tab (action=close)',
+  ui_focus_tab: 'ui_tab (action=focus)',
+  ui_activate_tab: 'ui_tab (action=activate)',
+  ui_navigate: 'ui_open (history=back|forward|reload)',
+  ui_guest_state: 'ui_status (guest=true)',
+  ui_pick_area: 'ui_pick (mode=area)',
+  ui_area: 'ui_evidence (area=true)',
+  ui_measure: 'ui_inspect (styles=[...])',
+  task_batch: 'task_create (items=[...])',
+  task_get: 'task_list (id=...)',
+  task_claim: 'task_update (id, owner=...)',
+  ui_template: 'отключён; вернуть можно через legacyToolNames: true',
+  ui_export: 'отключён; вернуть можно через legacyToolNames: true',
+}
+
+/** The same schema without per-field prose: aliases should cost the model as little context as possible. */
+function stripDescriptions(parameters: unknown): unknown {
+  if (Array.isArray(parameters)) return parameters.map(stripDescriptions)
+  if (typeof parameters !== 'object' || parameters === null) return parameters
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(parameters as Record<string, unknown>)) {
+    if (key === 'description' && typeof value === 'string') continue
+    out[key] = stripDescriptions(value)
+  }
+  return out
 }
 
 /**
@@ -3433,6 +3489,13 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
     if (value.value?.title !== 'Hi' || value.truncated !== false) throw new Error(`js вернул ${JSON.stringify(value)}`)
     commands.length = 0
 
+    const longRun = call('ui_js', { code: 'return await window.__labRun()', timeoutMs: 45000 }) as Promise<Record<string, unknown>>
+    const longCommand = commands[commands.length - 1]
+    if (longCommand?.kind !== 'js' || longCommand.args.timeoutMs !== 45000) throw new Error(`timeoutMs не дошёл до панели: ${JSON.stringify(longCommand?.args)}`)
+    await send({ jsResult: { status: 'OK', json: '{"passed":12}', truncated: false, at: Date.now() } })
+    if (unwrap<{ value?: { passed?: number } }>(await longRun).value?.passed !== 12) throw new Error('долгий ui_js не вернул результат')
+    commands.length = 0
+
     const failing = call('ui_js', { code: 'throw 1' }) as Promise<unknown>
     await send({ jsResult: { status: 'ERROR', message: 'boom', at: Date.now() } })
     await rejects('E_JS', () => failing)
@@ -3683,6 +3746,32 @@ export async function runVerifySelftest(): Promise<Record<string, unknown>> {
   } catch (error) {
     commands.length = 0
     results.push({ name: 'P4-1: консолидированная поверхность инструментов', pass: false, detail: String(error) })
+  }
+
+  // Deprecated aliases keep an agent with stale tool names working and tell it the new name.
+  try {
+    seedTransport()
+    commands.length = 0
+    const withAliases = exposedToolSurface('aliases') as Array<{ name: string; description: string; execute: (args: Record<string, unknown>) => Promise<{ text: string }> }>
+    const consolidated = exposedToolSurface(false)
+    if (withAliases.length !== consolidated.length + 15) throw new Error(`алиасов ${withAliases.length - consolidated.length}, ожидалось 15`)
+    if (exposedToolSurface(true).length !== 35) throw new Error('legacyToolNames:true должен вернуть 35 оригиналов')
+    const tabs = withAliases.find((row) => row.name === 'ui_tabs')
+    const navigate = withAliases.find((row) => row.name === 'ui_navigate')
+    if (tabs === undefined || navigate === undefined) throw new Error('нет алиасов ui_tabs/ui_navigate')
+    if (!tabs.description.startsWith('Устарел') || tabs.description.length > 120) throw new Error(`описание алиаса: ${tabs.description}`)
+    const listed = JSON.parse((await tabs.execute({})).text) as { deprecated?: string }
+    if (!String(listed.deprecated).includes('ui_tab')) throw new Error(`ui_tabs без подсказки: ${JSON.stringify(listed).slice(0, 120)}`)
+    const navigating = navigate.execute({ action: 'reload' })
+    if (commands[commands.length - 1]?.kind !== 'navigate') throw new Error('алиас ui_navigate не поставил команду')
+    await handleRoute(fakeRequest({ navResult: { ok: true, url: 'https://x.test/', reason: '', at: Date.now() } }, 'POST', '/startapus-browser/client/event'), fakeResponse().res)
+    const navigated = JSON.parse((await navigating).text) as { deprecated?: string; data?: { ok?: boolean } }
+    if (!String(navigated.deprecated).includes('ui_open') || navigated.data?.ok !== true) throw new Error(`ui_navigate: ${JSON.stringify(navigated).slice(0, 160)}`)
+    commands.length = 0
+    results.push({ name: 'P4-2: устаревшие алиасы работают и подсказывают новое имя', pass: true, detail: '21 + 15 алиасов; true → 35; ui_tabs/ui_navigate возвращают deprecated' })
+  } catch (error) {
+    commands.length = 0
+    results.push({ name: 'P4-2: устаревшие алиасы работают и подсказывают новое имя', pass: false, detail: String(error) })
   }
 
   // ui_navigate and the extended ui_act operations.
@@ -4167,7 +4256,7 @@ export function apply(ctx: Context, config: Config = {}): void {
 
   const tools = buildTools()
   let registered = 0
-  for (const tool of exposedToolSurface(config.legacyToolNames === true)) {
+  for (const tool of exposedToolSurface(config.legacyToolNames === true ? true : (config.legacyToolNames === false ? false : 'aliases'))) {
     try {
       ctx.effect(() => ctx.tools.register(tool as never), `startapus-browser: tool ${String(tool.name)}`)
       registered += 1

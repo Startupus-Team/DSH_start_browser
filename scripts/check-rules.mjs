@@ -599,8 +599,17 @@ check('R25: защита от внутренней сети — по хосту 
   return 'метаданные облака 169.254, ::1, 0.0.0.0, *.localhost закрыты; 10.example.com открыт'
 })
 
+check('R26: ui_js — ограничение времени выполнения', () => {
+  expect(rules.jsTimeoutMs(undefined) === 8000, 'по умолчанию 8 с')
+  expect(rules.jsTimeoutMs(30000) === 30000, '30 с допустимо')
+  expect(rules.jsTimeoutMs(999999) === 60000, 'потолок 60 с')
+  expect(rules.jsTimeoutMs(5) === 1000 && rules.jsTimeoutMs(-1) === 1000, 'нижняя граница 1 с')
+  expect(rules.jsTimeoutMs('abc') === 8000 && rules.jsTimeoutMs(Number.NaN) === 8000, 'мусор → значение по умолчанию')
+  return '1–60 с, по умолчанию 8 с'
+})
+
 if (failed > 0) {
   console.log(`FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('RULES OK: 25/25')
+console.log('RULES OK: 26/26')
