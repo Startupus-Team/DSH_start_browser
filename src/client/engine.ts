@@ -320,16 +320,9 @@ function memory(): { url: string; scrollY: number; restoreScroll: boolean } {
 
 /** Place one container over the panel rectangle. */
 function position(session: Session, visible: boolean): void {
+  // Only visibility: a synthetic `resize` nudge made pages repaint/reflow on every
+  // activation, which reads as the page "reopening".
   session.container.style.display = visible ? 'flex' : 'none'
-  if (!visible) return
-  // Showing a previously hidden guest needs a layout nudge.
-  window.requestAnimationFrame(() => {
-    try {
-      void session.guest?.executeJavaScript?.('window.dispatchEvent(new Event("resize"))', false)
-    } catch {
-      // ignore: guest may be gone
-    }
-  })
 }
 
 /** Create the guest of one tab (lazily, on first activation). */

@@ -44,7 +44,7 @@ import { PICKER_POLL, PICKER_SCRIPT } from './picker-source'
 
 
 const STYLES = `
-.dsh-startapus-browser { display:flex; flex-direction:column; height:100%; min-height:0; font-size:12px; }
+.dsh-startapus-browser { position:relative; display:flex; flex-direction:column; height:100%; min-height:0; font-size:12px; }
 .dsh-startapus-browser-toolbar { display:flex; align-items:center; gap:4px; padding:6px 8px; border-bottom:1px solid color-mix(in srgb, currentColor 12%, transparent); }
 .dsh-startapus-browser-btn { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border:none; border-radius:6px; background:transparent; color:inherit; cursor:pointer; }
 .dsh-startapus-browser-btn svg { width:16px; height:16px; display:block; }
@@ -52,7 +52,7 @@ const STYLES = `
 .dsh-startapus-browser-address { flex:1; min-width:0; height:26px; padding:0 8px; border:1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius:6px; background:transparent; color:inherit; font:inherit; outline:none; }
 .dsh-startapus-browser-status { padding:4px 10px 8px; opacity:0.72; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-startapus-browser-host { flex:1; min-height:0; }
-.dsh-startapus-browser-control { display:flex; align-items:center; gap:8px; padding:5px 8px; font-size:11px; border-bottom:1px solid color-mix(in srgb, currentColor 12%, transparent); background:color-mix(in srgb, #f5a623 14%, transparent); }
+.dsh-startapus-browser-control { position:absolute; top:34px; left:8px; right:8px; z-index:5; display:flex; align-items:center; gap:8px; padding:5px 8px; border-radius:6px; font-size:11px; background:color-mix(in srgb, #f5a623 22%, #111 78%); box-shadow:0 2px 10px rgba(0,0,0,0.25); }
 .dsh-startapus-browser-control button { border:1px solid currentColor; border-radius:5px; background:transparent; color:inherit; font:inherit; padding:2px 8px; cursor:pointer; }
 `
 
