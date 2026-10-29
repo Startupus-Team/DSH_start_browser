@@ -232,3 +232,43 @@ node scripts/build-rev.mjs   # отпечаток сборки
 
 Подробности и регламент релиза — [`docs/publishing.md`](docs/publishing.md). Сборка индекса:
 `node scripts/market-pack.mjs --git-source` (артефакты в `dist/` и корневой `market-index.json`).
+
+## Install (copyable)
+
+Marketplace index (Discover source):
+
+```
+https://cdn.jsdelivr.net/gh/Startupus-Team/DSH_start_browser@master/market-index.json
+```
+
+CLI install of the bundle (npm channel, when published):
+
+```bash
+dsh plugin --profile web add startapus-browser
+# or from this repository, pinned:
+dsh plugin --profile web add git+https://github.com/Startupus-Team/DSH_start_browser.git
+```
+
+Manual (developer) install: add to `~/.dsh/profiles/desktop/package.json` dependencies
+`"startapus-browser": "link:/path/to/startapus-browser"` and to `dsh.profile.bundles`.
+
+## Screenshots
+
+![Browser pane with a typed message](docs/screenshots/browser-typed-message.png)
+![Lab fixtures used by the tests](docs/screenshots/lab-fixtures.png)
+![In-page self-tests: 15 PASS](docs/screenshots/lab-self-tests.png)
+
+## Permissions and risks
+
+- **Arbitrary web content**: the tab renders any http(s) site inside an Electron `<webview>`;
+  the site runs with its own origin privileges, but the browser can send page-derived data
+  (text, DOM, screenshots) to the agent — treat it as untrusted input.
+- **Host code in-process**: the host half registers tools and HTTP routes inside DSH; install
+  only from a source you trust (this repository).
+- **Local files**: review tasks (`~/.dsh/startapus-tasks.json`), screenshots
+  (`~/.dsh/startapus-crops/`), diagnostics (`~/.dsh/startapus-host.log`). Nothing is uploaded
+  by the plugin itself; `ui_export` writes a zip locally.
+- **Network**: the plugin opens the sites you point it at, plus loopback only when a human
+  types the address (agent navigation to private hosts is blocked).
+- **Kernel APIs**: relies on DSH desktop webview leases and the sidebar tab API; a DSH update
+  may require a matching plugin release (`engines.dsh`).
