@@ -19,6 +19,20 @@ const useGit = process.argv.includes('--git-source')
 const gitRemote = 'https://github.com/Startupus-Team/DSH_start_browser'
 const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
 const version = String(pkg.version)
+// Индекс общий для всех бандлов Startapus: сохраняем записи чужих плагинов,
+// чтобы пересборка одного пакета не выкидывала их из маркета.
+const existingIndex = (() => {
+  if (!existsSync('market-index.json')) return { plugins: [], categories: {} }
+  try {
+    const doc = JSON.parse(readFileSync('market-index.json', 'utf8'))
+    return {
+      plugins: Array.isArray(doc.plugins) ? doc.plugins.filter((row) => row && row.name !== pkg.name) : [],
+      categories: (doc.metadata && doc.metadata.categories) || {},
+    }
+  } catch {
+    return { plugins: [], categories: {} }
+  }
+})()
 const SEMVER = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\+[0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*)?$/
 const failures = []
 const ok = (label, condition, detail = '') => {
@@ -69,6 +83,7 @@ const index = {
   metadata: {
     categories: {
       browser: { title: { en: 'Browser', ru: 'Браузер', zh: '浏览器' } },
+      ...existingIndex.categories,
     },
   },
   plugins: [
@@ -100,6 +115,7 @@ const index = {
         },
       ],
     },
+    ...existingIndex.plugins,
   ],
 }
 
