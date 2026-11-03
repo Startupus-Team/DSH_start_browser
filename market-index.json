@@ -82,7 +82,7 @@
         "ru": "Не давать компьютеру уснуть, пока в DSH идёт задача: долгая работа не оборвётся на полпути. caffeinate на macOS, SetThreadExecutionState на Windows, systemd-inhibit на Linux.",
         "zh": "DSH 任务运行期间阻止计算机进入睡眠，避免长时间任务被中断。macOS 用 caffeinate，Windows 用 SetThreadExecutionState，Linux 用 systemd-inhibit。"
       },
-      "icon": "./icon.svg",
+      "icon": "./icons/startapus-caffeinate.svg",
       "metadata": {
         "category": "system",
         "keywords": [
