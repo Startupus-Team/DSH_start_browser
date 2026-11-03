@@ -18,6 +18,13 @@
           "ru": "Браузер",
           "zh": "浏览器"
         }
+      },
+      "system": {
+        "title": {
+          "en": "System",
+          "ru": "Система",
+          "zh": "系统"
+        }
       }
     }
   },
@@ -56,6 +63,49 @@
             "type": "git",
             "url": "https://github.com/Startupus-Team/DSH_start_browser",
             "commit": "0a54d931d730440ff8ad78780d17fa1d5cf44c4e"
+          },
+          "engines": {
+            "dsh": ">=0.2.1-rc.3 <0.3.0"
+          }
+        }
+      ]
+    },
+    {
+      "name": "startapus-caffeinate",
+      "title": {
+        "en": "Startapus Caffeinate",
+        "ru": "Startapus Caffeinate",
+        "zh": "Startapus Caffeinate"
+      },
+      "description": {
+        "en": "Keep the computer awake while a DSH task runs, so long scheduled work is not cut off midway. caffeinate on macOS, SetThreadExecutionState on Windows, systemd-inhibit on Linux.",
+        "ru": "Не давать компьютеру уснуть, пока в DSH идёт задача: долгая работа не оборвётся на полпути. caffeinate на macOS, SetThreadExecutionState на Windows, systemd-inhibit на Linux.",
+        "zh": "DSH 任务运行期间阻止计算机进入睡眠，避免长时间任务被中断。macOS 用 caffeinate，Windows 用 SetThreadExecutionState，Linux 用 systemd-inhibit。"
+      },
+      "icon": "./icon.svg",
+      "metadata": {
+        "category": "system",
+        "keywords": [
+          "sleep",
+          "caffeinate",
+          "power",
+          "awake",
+          "macos",
+          "windows",
+          "linux",
+          "сон",
+          "энергия",
+          "задачи"
+        ]
+      },
+      "versions": [
+        {
+          "version": "1.0.0",
+          "publishTimestamp": 1793734600,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/Startupus-Team/DSH_start_caffeinate",
+            "commit": "ab9b8c7676a24f0e5f6adb00a50dcf46197d529b"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.3 <0.3.0"
