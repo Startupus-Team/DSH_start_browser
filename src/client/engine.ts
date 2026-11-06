@@ -348,6 +348,28 @@ interface PaneState {
   visible: boolean
 }
 const paneState = new Map<string, PaneState>()
+/** Last real address of a tab, survives pane remounts and client reloads. */
+const LAST_URL_PREFIX = 'startapus-browser:last-url:'
+function rememberedUrl(tabId: string): string {
+  try {
+    return window.sessionStorage.getItem(LAST_URL_PREFIX + tabId) ?? ''
+  } catch {
+    return ''
+  }
+}
+function rememberUrl(tabId: string, url: string): void {
+  if (url === '' || url.startsWith('about:')) return
+  try {
+    window.sessionStorage.setItem(LAST_URL_PREFIX + tabId, url)
+  } catch {
+    // storage unavailable: memory of paneState still works for this client
+  }
+}
+/** Address the pane actually shows: what the tab last loaded, if anything. */
+export function rememberedUrlFor(tabId: string): string {
+  return rememberedUrl(tabId)
+}
+
 /** Tabs whose renderer died: held until the human asks to restore them. */
 const crashedTabs = new Map<string, { url: string; reason: string; at: number }>()
 
@@ -358,7 +380,8 @@ let reconcileTimer: number | null = null
 
 /** The panel tells the engine what its pane currently is. */
 export function setPaneState(tabId: string, state: Partial<PaneState>): void {
-  const previous = paneState.get(tabId) ?? { url: START_URL, host: null, visible: false }
+  const remembered = rememberedUrl(tabId)
+  const previous = paneState.get(tabId) ?? { url: remembered !== '' ? remembered : START_URL, host: null, visible: false }
   paneState.set(tabId, {
     url: state.url ?? previous.url,
     host: state.host ?? previous.host,
@@ -428,8 +451,11 @@ export function restoreCrashedTab(tabId: string): boolean {
 export function desiredUrlFor(tabId: string): string | null {
   const requested = requestedUrl.get(tabId)
   if (requested !== undefined) return requested
+  const remembered = rememberedUrl(tabId)
   const state = paneState.get(tabId)
-  return state === undefined ? null : state.url
+  if (state === undefined) return remembered === '' ? null : remembered
+  if (state.url === START_URL && remembered !== '') return remembered
+  return state.url
 }
 
 /** Crash info for one tab (used by the panel's restore chip). */
@@ -893,7 +919,10 @@ function onNavigate(session: Session, guest: GuestElement): void {
   try {
     const url = String(guest.getURL?.() ?? session.url)
     void note('guest:navigated', { tabId: session.tabId, host: hostOf(url) })
-    if (!url.startsWith('about:blank')) session.url = url
+    if (!url.startsWith('about:blank')) {
+      session.url = url
+      rememberUrl(session.tabId, url)
+    }
     // Keep the pane's desired URL in sync with reality: otherwise a later
     // reconcile (new instance / remount) navigates back to the stale default
     // and the lab/typed page is lost.

@@ -34,6 +34,7 @@ import {
   setEvidence,
   setPaneState,
   desiredUrlFor,
+  rememberedUrlFor,
   restoreCrashedTab,
   crashedInfo,
   setSessionRect,
@@ -127,7 +128,14 @@ function PanelChrome(props: PanelProps): React.ReactNode {
     // Always materialise the page on mount: a tab can be opened in the background,
     // and a guest is only created from a mounted pane. Visibility then decides
     // whether it is shown.
-    setPaneState(tabKey, { url: initialUrl, host, visible: props.visible !== false })
+    // Seed the address only for a tab the engine has never seen. Re-sending
+    // `initialUrl` on every remount reset a live localhost page to the default
+    // start page, which made the address bar flicker between the two.
+    if (desiredUrlFor(tabKey) === null) {
+      setPaneState(tabKey, { url: initialUrl, host, visible: props.visible !== false })
+    } else {
+      setPaneState(tabKey, { host, visible: props.visible !== false })
+    }
     if (props.visible === false) {
       // A tab opened through the controller mounts hidden: front it so the kernel
       // lays the pane out and the guest can attach at all.
@@ -165,7 +173,7 @@ function PanelChrome(props: PanelProps): React.ReactNode {
       return true
     }
     const reportVisibility = (): void => {
-      setPaneState(tabKey, { url: initialUrl, host: hostRef.current, visible: paneVisible() })
+      setPaneState(tabKey, { host: hostRef.current, visible: paneVisible() })
     }
     reportVisibility()
     const visibilityTimer = window.setInterval(reportVisibility, 700)
@@ -276,7 +284,8 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   // With no page yet the field still shows the intended address instead of a
   // placeholder, and focusing it no longer wipes what the user was looking at.
   const desired = desiredUrlFor(tabKey) ?? ''
-  const shownUrl = snapshot.url !== '' ? snapshot.url : desired
+  const remembered = rememberedUrlFor(tabKey)
+  const shownUrl = snapshot.url !== '' ? snapshot.url : (remembered !== '' ? remembered : desired)
   const address = editing ? draft : (shownUrl === '' ? draft : shownUrl)
 
   return (

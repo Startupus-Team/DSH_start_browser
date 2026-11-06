@@ -89,6 +89,12 @@ globalThis.window = {
   clearInterval: () => {},
   requestAnimationFrame: (fn) => { fn(); return 0 },
   dispatchEvent: () => {},
+  sessionStorage: {
+    store: new Map(),
+    getItem(key) { return this.store.has(key) ? this.store.get(key) : null },
+    setItem(key, value) { this.store.set(key, String(value)) },
+    removeItem(key) { this.store.delete(key) },
+  },
   devicePixelRatio: 2,
 }
 globalThis.window.dshDesktop = {
@@ -457,8 +463,28 @@ await check('E21: показ существующей вкладки перек�
   return 'activeTab и url переключились на показанную вкладку'
 })
 
+await check('E22: адрес вкладки не сбрасывается повторным setPaneState (мигание адресной строки)', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  const local = 'http://localhost:8190/p/kontur-sekcii/play?page=index'
+  engine.setPaneState('flickerPane', { url: local, host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 140))
+  const guest = engine.guestOf('flickerPane')
+  expect(guest !== null, 'гость не создан')
+  guest.url = local
+  guest.fire('did-navigate')
+  expect(engine.rememberedUrlFor('flickerPane').startsWith('http://localhost:8190/'), `запомнено: ${engine.rememberedUrlFor('flickerPane')}`)
+  // Visibility/resize ticks and pane remounts call setPaneState without a url.
+  engine.setPaneState('flickerPane', { host, visible: true })
+  expect((engine.desiredUrlFor('flickerPane') ?? '').startsWith('http://localhost:8190/'), `desired: ${String(engine.desiredUrlFor('flickerPane'))}`)
+  // A stale default must not win over the remembered address either.
+  engine.setPaneState('flickerPane', { url: engine.START_URL ?? 'https://startapus.com', host, visible: true })
+  expect((engine.desiredUrlFor('flickerPane') ?? '').startsWith('http://localhost:8190/'), `desired после дефолта: ${String(engine.desiredUrlFor('flickerPane'))}`)
+  return 'desired URL остаётся localhost при повторных setPaneState'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 22/22')
+console.log('ENGINE OK: 23/23')
