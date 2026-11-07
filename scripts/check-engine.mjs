@@ -483,8 +483,24 @@ await check('E22: адрес вкладки не сбрасывается пов
   return 'desired URL остаётся localhost при повторных setPaneState'
 })
 
+await check('E23: повторные отчёты видимости не пересоздают гостя (нет мигания)', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  engine.setPaneState('steadyPane', { url: 'https://steady.example/', host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 140))
+  const guest = engine.guestOf('steadyPane')
+  expect(guest !== null, 'гость не создан')
+  guest.fire('dom-ready')
+  const before = engine.engineState().counters.acquires
+  for (let tick = 0; tick < 6; tick += 1) engine.setPaneState('steadyPane', { host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 120))
+  expect(engine.engineState().counters.acquires === before, `acquire вырос: ${engine.engineState().counters.acquires - before}`)
+  expect(engine.guestOf('steadyPane') === guest, 'гость пересоздан')
+  return 'гость и счётчик acquire стабильны при повторных отчётах'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 23/23')
+console.log('ENGINE OK: 24/24')

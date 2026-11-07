@@ -105,6 +105,10 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   const [addressNote, setAddressNote] = useState('')
   /** First edit per focus is logged once, so a field that eats input shows up in the host log. */
   const typedSinceFocus = useRef(false)
+  // Visibility hysteresis: one 0x0 sample (scrollbar, layout pass, chat re-render)
+  // must not hide the page for a tick — that reads as the browser blinking.
+  const hiddenStreak = useRef(0)
+  const lastVisibility = useRef<boolean | null>(null)
   const [picking, setPicking] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
   const [taskRows, setTaskRows] = useState<Array<{ id: string; problem: string; state: string; attempts: number }>>([])
@@ -173,7 +177,15 @@ function PanelChrome(props: PanelProps): React.ReactNode {
       return true
     }
     const reportVisibility = (): void => {
-      setPaneState(tabKey, { host: hostRef.current, visible: paneVisible() })
+      const measured = paneVisible()
+      hiddenStreak.current = measured ? 0 : hiddenStreak.current + 1
+      // Stay visible until two consecutive misses; show immediately when measured.
+      const visible = measured || hiddenStreak.current < 2
+      if (lastVisibility.current !== visible) {
+        lastVisibility.current = visible
+        void note('pane:visible', { visible, measure: measured })
+      }
+      setPaneState(tabKey, { host: hostRef.current, visible })
     }
     reportVisibility()
     const visibilityTimer = window.setInterval(reportVisibility, 700)

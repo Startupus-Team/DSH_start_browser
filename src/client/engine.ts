@@ -601,7 +601,10 @@ function memory(): { url: string; scrollY: number; restoreScroll: boolean } {
 function position(session: Session, visible: boolean): void {
   // Only visibility: a synthetic `resize` nudge made pages repaint/reflow on every
   // activation, which reads as the page "reopening".
-  session.container.style.display = visible ? 'flex' : 'none'
+  const next = visible ? 'flex' : 'none'
+  // Writing the same value still nudges some engines into a style pass; the
+  // visibility poll runs every 700 ms, so an unconditional write can blink.
+  if (session.container.style.display !== next) session.container.style.display = next
 }
 
 /** Create the guest of one tab (lazily, on first activation). */
