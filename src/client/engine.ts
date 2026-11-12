@@ -61,6 +61,9 @@ interface Session {
   navigated: boolean
   /** Emulated colour scheme, re-applied after every document load. */
   colorScheme: 'dark' | 'light' | null
+  /** The container is not laid out: the kernel may detach the guest, so a
+   *  re-attached guest can come back as about:blank (black screen). */
+  hidden: boolean
 }
 
 export interface EngineState {
@@ -597,14 +600,44 @@ function memory(): { url: string; scrollY: number; restoreScroll: boolean } {
   return memoryOf(activeTabId === null ? undefined : sessions.get(activeTabId))
 }
 
+/** A hidden webview can lose its document after the kernel re-attaches it:
+ *  it comes back on about:blank and the pane looks black. Re-open the address. */
+function reviveBlankGuest(session: Session): void {
+  if (!session.ready) return
+  const guest = session.guest
+  if (guest === null) return
+  let current = ''
+  try {
+    current = String(guest.getURL?.() ?? '')
+  } catch {
+    return
+  }
+  if (current !== '' && !current.startsWith('about:blank')) return
+  if (session.url === '' || session.url.startsWith('about:blank')) return
+  try {
+    counters.navigations += 1
+    guest.loadURL?.(session.url)
+    void note('guest:revive', { tabId: session.tabId, host: hostOf(session.url) })
+    setStatus(`восстанавливаю ${session.url}`)
+    notify()
+  } catch {
+    // loadURL before attach: the next show/dom-ready will try again.
+  }
+}
+
 /** Place one container over the panel rectangle. */
 function position(session: Session, visible: boolean): void {
-  // Only visibility: a synthetic `resize` nudge made pages repaint/reflow on every
-  // activation, which reads as the page "reopening".
   const next = visible ? 'flex' : 'none'
   // Writing the same value still nudges some engines into a style pass; the
   // visibility poll runs every 700 ms, so an unconditional write can blink.
   if (session.container.style.display !== next) session.container.style.display = next
+  if (!visible) session.hidden = true
+  if (visible && session.hidden) {
+    session.hidden = false
+    // Re-attached guests sometimes have no document yet: defer so the guest can
+    // finish attaching before we ask it for its URL.
+    window.setTimeout(() => reviveBlankGuest(session), 120)
+  }
 }
 
 /** Create the guest of one tab (lazily, on first activation). */
@@ -659,6 +692,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     lastRecoveryAt: 0,
     navigated: false,
     colorScheme: null,
+    hidden: false,
   }
   sessions.set(tabId, session)
   notify()
@@ -715,6 +749,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
       // `dom-ready` fires for every document, so navigating here unconditionally
       // makes the page reload forever. Navigate exactly once.
       if (session.navigated) {
+        window.setTimeout(() => reviveBlankGuest(session), 0)
         notify()
         return
       }

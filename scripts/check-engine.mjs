@@ -499,8 +499,29 @@ await check('E23: повторные отчёты видимости не пер
   return 'гость и счётчик acquire стабильны при повторных отчётах'
 })
 
+await check('E24: вернувшаяся вкладка не остаётся чёрной (revive about:blank)', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  engine.setPaneState('revivePane', { url: 'https://revive.example/page', host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 140))
+  const guest = engine.guestOf('revivePane')
+  expect(guest !== null, 'гость не создан')
+  guest.url = 'https://revive.example/page'
+  guest.fire('dom-ready')
+  engine.setPaneState('revivePane', { visible: false })
+  // The kernel detached and re-attached the guest: Electron reports about:blank.
+  guest.url = 'about:blank#lease'
+  engine.setPaneState('revivePane', { visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 200))
+  guest.fire('dom-ready')
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  expect(guest.loadedUrls.length >= 2, `перезагрузок: ${guest.loadedUrls.length} (${JSON.stringify(guest.loadedUrls)})`)
+  expect(guest.loadedUrls[guest.loadedUrls.length - 1] === 'https://revive.example/page', `последний адрес: ${guest.loadedUrls[guest.loadedUrls.length - 1]}`)
+  return 'about:blank после переаттача снова открывает адрес вкладки'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 24/24')
+console.log('ENGINE OK: 25/25')
