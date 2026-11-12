@@ -37,6 +37,7 @@ import {
   rememberedUrlFor,
   restoreCrashedTab,
   crashedInfo,
+  retryLoad,
   setSessionRect,
   setStatus,
   setViewHooks,
@@ -98,6 +99,7 @@ function PanelChrome(props: PanelProps): React.ReactNode {
   const initialUrl = typeof props.params?.url === 'string' ? props.params.url : 'https://startapus.com'
   const hostRef = useRef<HTMLDivElement | null>(null)
   const [snapshot, setSnapshot] = useState(() => engineState())
+  const [loadErrorHidden, setLoadErrorHidden] = useState(false)
   const [draft, setDraft] = useState(initialUrl)
   /** While the address field is focused it is the single source of truth. */
   const [editing, setEditing] = useState(false)
@@ -393,6 +395,16 @@ function PanelChrome(props: PanelProps): React.ReactNode {
         </div>
       )}
       {(() => {
+        const loadError = snapshot.lastLoadError
+        if (loadError !== null && !loadErrorHidden) {
+          return (
+            <div className="dsh-startapus-browser-crash" role="alert">
+              <span>страница не открылась: {loadError.description === '' ? `код ${loadError.code}` : loadError.description} · {loadError.url}</span>
+              <button type="button" onClick={() => retryLoad(tabKey)}>Повторить</button>
+              <button type="button" onClick={() => setLoadErrorHidden(true)}>Скрыть</button>
+            </div>
+          )
+        }
         const crash = crashedInfo(tabKey)
         if (crash === null) return null
         return (

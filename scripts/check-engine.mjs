@@ -520,8 +520,42 @@ await check('E24: вернувшаяся вкладка не остаётся ч
   return 'about:blank после переаттача снова открывает адрес вкладки'
 })
 
+await check('E25: цикл about:blank останавливается (лимит revive)', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  engine.setPaneState('loopPane', { url: 'https://loop.example/', host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 140))
+  const guest = engine.guestOf('loopPane')
+  expect(guest !== null, 'гость не создан')
+  guest.url = 'https://loop.example/'
+  guest.fire('dom-ready')
+  // Eviction would recreate this session mid-test and hide the revive budget:
+  // hide the older panes first (a visible pane is reconciled back to life), then close them.
+  const others = ['pane1', 'pane2', 'crashedPane', 'switchA', 'switchB', 'flickerPane', 'steadyPane', 'revivePane']
+  for (const other of others) engine.setPaneState(other, { visible: false })
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  for (const other of others) engine.closeSession(other)
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  const afterFirst = guest.loadedUrls.length
+  for (let i = 0; i < 5; i += 1) {
+    guest.url = 'about:blank#lease'
+    // Drive the transitions directly: the reconcile loop coalesces quick flips,
+    // and this test is about the revive budget, not about scheduling.
+    engine.hideSession('loopPane')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    engine.setPaneState('loopPane', { visible: true })
+    engine.setSessionRect('loopPane', true)
+    await new Promise((resolve) => setTimeout(resolve, 40))
+  }
+  const revives = (engine.guestOf('loopPane')?.loadedUrls.length ?? 0) - afterFirst
+  expect(revives <= 3, `переоткрытий ${revives}, ожидалось ≤3`)
+  expect(engine.engineState().status.includes('цикл'), `статус: ${engine.engineState().status}`)
+  return `revive ограничен (${revives} ≤ 3), цикл назван в статусе`
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 25/25')
+console.log('ENGINE OK: 26/26')

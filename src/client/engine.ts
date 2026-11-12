@@ -77,6 +77,8 @@ export interface EngineState {
   hasGuest: boolean
   counters: { acquires: number; releases: number; attachFailures: number; recoveries: number; panics: number; navigations: number; loadErrors: number; crashes: number }
   panels: number
+  /** Last main-frame load failure, so the pane can offer a retry instead of a dead error page. */
+  lastLoadError: { code: number; description: string; url: string; at: number } | null
 }
 
 // Injected by build.mjs; guarded so standalone tests of this module still load.
@@ -213,6 +215,7 @@ export function engineState(): EngineState {
     url: activeTabId === null ? '' : (sessions.get(activeTabId)?.url ?? ''),
     hasGuest: activeGuest() !== null,
     counters: { ...counters },
+    lastLoadError: lastLoadError === null ? null : { ...lastLoadError },
     panes: [...paneState.entries()].map(([tabId, state]) => ({ tabId, url: state.url, visible: state.visible })),
   }
 }
@@ -461,6 +464,26 @@ export function desiredUrlFor(tabId: string): string | null {
   return state.url
 }
 
+/** Human pressed «Повторить» after a load error: reload, or reopen the address. */
+export function retryLoad(tabId: string): boolean {
+  const session = sessions.get(tabId)
+  const target = lastLoadError?.url ?? session?.url ?? ''
+  if (session !== undefined && session.guest !== null) {
+    try {
+      counters.navigations += 1
+      session.guest.reload?.()
+      setStatus(`повторяю ${target || session.url}`)
+      notify()
+      return true
+    } catch {
+      // fall through to a fresh navigation
+    }
+  }
+  if (target === '') return false
+  const result = openInSession(tabId, target, true)
+  return result.ok
+}
+
 /** Crash info for one tab (used by the panel's restore chip). */
 export function crashedInfo(tabId: string): { url: string; reason: string; at: number } | null {
   return crashedTabs.get(tabId) ?? null
@@ -600,6 +623,9 @@ function memory(): { url: string; scrollY: number; restoreScroll: boolean } {
   return memoryOf(activeTabId === null ? undefined : sessions.get(activeTabId))
 }
 
+/** Revive attempts per tab: a repetitive about:blank must stop, not spin. */
+const reviveLedger = new Map<string, number[]>()
+
 /** A hidden webview can lose its document after the kernel re-attaches it:
  *  it comes back on about:blank and the pane looks black. Re-open the address. */
 function reviveBlankGuest(session: Session): void {
@@ -614,10 +640,21 @@ function reviveBlankGuest(session: Session): void {
   }
   if (current !== '' && !current.startsWith('about:blank')) return
   if (session.url === '' || session.url.startsWith('about:blank')) return
+  const now = Date.now()
+  const recent = (reviveLedger.get(session.tabId) ?? []).filter((at) => now - at < 10000)
+  if (recent.length >= 3) {
+    reviveLedger.set(session.tabId, recent)
+    void note('guest:revive-limit', { tabId: session.tabId, attempts: recent.length })
+    setStatus('перезагрузки остановлены: похоже на цикл about:blank — нажмите «Повторить»')
+    notify()
+    return
+  }
+  recent.push(now)
+  reviveLedger.set(session.tabId, recent)
   try {
     counters.navigations += 1
     guest.loadURL?.(session.url)
-    void note('guest:revive', { tabId: session.tabId, host: hostOf(session.url) })
+    void note('guest:revive', { tabId: session.tabId, host: hostOf(session.url), attempt: recent.length })
     setStatus(`восстанавливаю ${session.url}`)
     notify()
   } catch {
