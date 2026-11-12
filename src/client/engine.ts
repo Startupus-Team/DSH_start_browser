@@ -12,6 +12,7 @@
 
 import type { ElementPick } from './element-refs.ts'
 import { actScript, colorSchemeScript, coverageScript, evidenceScript, inspectScript, measureScript, networkScript, pageScanScript, pageTextScript, waitScript, jsScript, netHookScript, captureRectScript } from './verify-scripts'
+import { CANCEL_PICK } from './picker-source'
 import { captureKey, cropRect as clampCropRect, diffPixels, normalizeAddress, jsTimeoutMs, normalizeWait, pickSessionToEvict, rememberedScheme, verifyNeedsReload, verifySettleMs } from './rules'
 import { focusStartapusTab, openStartapusTab } from './tabs'
 import { setTabTitle } from './tab-titles'
@@ -487,6 +488,29 @@ export function retryLoad(tabId: string): boolean {
 /** Crash info for one tab (used by the panel's restore chip). */
 export function crashedInfo(tabId: string): { url: string; reason: string; at: number } | null {
   return crashedTabs.get(tabId) ?? null
+}
+
+/** Cancel a running page picker: remove its overlay and park an explicit `''`. */
+export async function cancelActivePick(): Promise<boolean> {
+  try {
+    await runInActive(CANCEL_PICK, 3000)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** Give the guest keyboard focus, so Esc reaches the page instead of the panel. */
+export function focusActiveGuest(): boolean {
+  const guest = activeGuest()
+  const focus = (guest as { focus?: () => void } | null)?.focus
+  if (typeof focus !== 'function') return false
+  try {
+    focus.call(guest)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** Start element picking from the panel/shortcut, not only from the agent command. */
@@ -1197,9 +1221,18 @@ export async function runInActive(code: string, timeoutMs = 5000): Promise<unkno
 /** Reject when a page-side script does not answer in time. */
 export function withTimeout<T>(promise: Promise<T>, ms: number, code: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error(code)), ms)
+    let settled = false
+    // The fake timers in the offline harness fire as microtasks, so the timeout
+    // callback gets one extra microtask hop and checks `settled` before rejecting;
+    // a real browser timeout still rejects normally.
+    const timer = window.setTimeout(() => {
+      Promise.resolve().then(() => {
+        if (!settled) reject(new Error(code))
+      })
+    }, ms)
     promise.then(
       (value) => {
+        settled = true
         window.clearTimeout(timer)
         resolve(value)
       },

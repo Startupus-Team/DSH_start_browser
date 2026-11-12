@@ -62,6 +62,7 @@ class FakeElement {
   getBoundingClientRect() { return { left: 0, top: 0, width: 600, height: 700 } }
   loadURL(url) { this.loadedUrls.push(url); this.url = url }
   getURL() { return this.url }
+  focus() { this.focused = (this.focused ?? 0) + 1 }
   getTitle() { return this.title }
   reload() { this.reloaded = (this.reloaded ?? 0) + 1 }
   setZoomFactor() {}
@@ -554,8 +555,24 @@ await check('E25: цикл about:blank останавливается (лими�
   return `revive ограничен (${revives} ≤ 3), цикл назван в статусе`
 })
 
+await check('E26: отмена пикера убирает оверлей и фокусирует страницу', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  engine.setPaneState('pickPane', { url: 'https://pick.example/', host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 140))
+  const guest = engine.guestOf('pickPane')
+  expect(guest !== null, 'гость не создан')
+  guest.url = 'https://pick.example/'
+  guest.fire('dom-ready')
+  expect(engine.focusActiveGuest() === true, 'фокус не передан странице')
+  expect((guest.focused ?? 0) >= 1, 'focus() не вызван')
+  const cancelled = await engine.cancelActivePick()
+  expect(cancelled === true, 'cancelActivePick не сработал')
+  return 'cancelActivePick и focusActiveGuest доступны движку'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 26/26')
+console.log('ENGINE OK: 27/27')

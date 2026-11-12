@@ -45,7 +45,7 @@ import {
 } from './engine'
 import { normalizeAddress } from './rules'
 import { note } from './transport'
-import { activateOwnTab, setTabCloser } from './engine'
+import { activateOwnTab, cancelActivePick, focusActiveGuest, setTabCloser } from './engine'
 import { focusStartapusTab } from './tabs'
 import { PICKER_POLL, PICKER_SCRIPT } from './picker-source'
 
@@ -198,22 +198,42 @@ function PanelChrome(props: PanelProps): React.ReactNode {
     }
   }, [tabKey, initialUrl])
 
+  const cancelPick = useCallback((): void => {
+    if (!pickingRef.current) return
+    pickingRef.current = false
+    setPicking(false)
+    setStatus('выбор отменён')
+    void cancelActivePick()
+  }, [])
+
   const togglePick = useCallback((): void => {
-    const next = !pickingRef.current
-    pickingRef.current = next
-    setPicking(next)
-    setStatus(next ? 'выберите элемент на странице' : 'выбор отменён')
-    if (!next) return
+    // Second click on the button cancels: the page crosshair and the overlay
+    // must disappear, not keep waiting for a click.
+    if (pickingRef.current) {
+      cancelPick()
+      return
+    }
+    pickingRef.current = true
+    setPicking(true)
+    setStatus('выберите элемент на странице')
     void (async () => {
       try {
         const nonce = `pick-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
         await runInActive(`window.__startapusNonce = ${JSON.stringify(nonce)}`, 3000)
         await runInActive(PICKER_SCRIPT, 10000)
+        // Keyboard focus inside the page makes its own Esc handler fire; the
+        // panel-level Esc below covers the case when focus stayed in DSH.
+        focusActiveGuest()
         for (;;) {
           await new Promise((resolve) => setTimeout(resolve, 600))
           if (!pickingRef.current) return
           const raw = await runInActive(PICKER_POLL, 5000).catch(() => null)
-          if (typeof raw !== 'string' || raw === '') continue
+          if (typeof raw !== 'string') continue
+          // The page parks '' when Esc or the cancel hook finished the pick.
+          if (raw === '') {
+            cancelPick()
+            return
+          }
           const pick = JSON.parse(raw) as ElementPick & { nonce?: string }
           if (pick.nonce !== nonce) {
             setStatus('выбор отклонён: результат не от этой сессии пикера')
@@ -234,7 +254,19 @@ function PanelChrome(props: PanelProps): React.ReactNode {
         setStatus(`выбор не удался: ${String(error)}`)
       }
     })()
-  }, [props])
+  }, [props, cancelPick])
+
+  useEffect(() => {
+    if (!picking) return
+    const onEscape = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      cancelPick()
+    }
+    window.addEventListener('keydown', onEscape, true)
+    return () => window.removeEventListener('keydown', onEscape, true)
+  }, [picking, cancelPick])
 
   useEffect(() => {
     return setTabCloser(tabKey, () => props.onClose?.() === true)

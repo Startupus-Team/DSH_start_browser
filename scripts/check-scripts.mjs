@@ -21,6 +21,19 @@ const result = await build({
 })
 
 const code = result.outputFiles[0].text
+
+// The picker lives in its own module but is injected the same way: parse it here too.
+const pickerBuild = await build({
+  entryPoints: ['src/client/picker-source.ts'],
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  write: false,
+  logLevel: 'silent',
+})
+const pickerFile = join(mkdtempSync(join(tmpdir(), 'startapus-picker-')), 'picker.mjs')
+writeFileSync(pickerFile, pickerBuild.outputFiles[0].text, 'utf8')
+const picker = await import(pathToFileURL(pickerFile).href)
 const dir = mkdtempSync(join(tmpdir(), 'startapus-scripts-'))
 const file = join(dir, 'verify-scripts.mjs')
 writeFileSync(file, code, 'utf8')
@@ -40,6 +53,9 @@ const cases = [
   ['page-text', module.pageTextScript(4000)],
   ['network', module.networkScript(100)],
   ['inspect', module.inspectScript('a', ['color'])],
+  ['picker', picker.PICKER_SCRIPT],
+  ['picker-cancel', picker.CANCEL_PICK],
+  ['area-picker', picker.AREA_SCRIPT],
 ]
 
 let failed = 0

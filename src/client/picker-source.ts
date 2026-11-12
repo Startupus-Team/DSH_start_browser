@@ -264,6 +264,7 @@ export const PICKER_SCRIPT = `
       box.remove();
       tip.remove();
       window.__startapusPickActive = false;
+      window.__startapusPickCancel = undefined;
     }
 
     function finish(value) {
@@ -313,6 +314,15 @@ export const PICKER_SCRIPT = `
     doc.addEventListener('mousemove', onMove, true);
     doc.addEventListener('click', onClick, true);
     doc.addEventListener('keydown', onKey, true);
+    // The panel cancels by calling this: a second click on the picker button or
+    // Escape outside the page must not leave the crosshair and the overlay behind.
+    window.__startapusPickCancel = function () {
+      if (!done) {
+        done = true;
+        window.__startapusPick = '';
+      }
+      cleanup();
+    };
     return 'installed';
   } catch (error) {
     window.__startapusPick = 'ERROR:' + String(error && error.message ? error.message : error);
@@ -424,6 +434,34 @@ export const AREA_SCRIPT = `
   } catch (error) {
     window.__startapusPick = 'ERROR:' + String(error && error.message ? error.message : error);
     return 'failed';
+  }
+})()
+`
+
+
+/**
+ * Cancel an installed picker: remove the overlay and listeners, park `''` so a
+ * pending poll sees an explicit cancellation instead of waiting forever.
+ */
+export const CANCEL_PICK = `
+(() => {
+  try {
+    if (typeof window.__startapusPickCancel === 'function') {
+      window.__startapusPickCancel();
+    } else if (window.__startapusPickActive === true) {
+      // Listener cleanup lost (e.g. the page replaced the node): clear the flag
+      // and the overlay nodes so the next click is not swallowed.
+      var nodes = document.querySelectorAll('[data-startapus-picker]');
+      for (var i = 0; i < nodes.length; i += 1) nodes[i].remove();
+      window.__startapusPickActive = false;
+      window.__startapusPick = '';
+    } else {
+      window.__startapusPick = '';
+    }
+    window.__startapusNonce = '';
+    return 'cancelled';
+  } catch (error) {
+    return 'ERROR:' + String(error && error.message ? error.message : error);
   }
 })()
 `
