@@ -272,3 +272,8 @@ Manual (developer) install: add to `~/.dsh/profiles/desktop/package.json` depend
   types the address (agent navigation to private hosts is blocked).
 - **Kernel APIs**: relies on DSH desktop webview leases and the sidebar tab API; a DSH update
   may require a matching plugin release (`engines.dsh`).
+
+## Архитектура и стандарты
+
+- Аудит и причины нестабильности: [`docs/architecture-audit.md`](docs/architecture-audit.md)
+- Стандарты и ТЗ: [`docs/browser-spec.md`](docs/browser-spec.md)

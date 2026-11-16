@@ -22,7 +22,7 @@ import {
 import type { ElementPick } from './element-refs.ts'
 import {
   activeGuest,
-  detachSession,
+  suspendSession,
   engineState,
   guestOf,
   openInSession,
@@ -156,57 +156,22 @@ function PanelChrome(props: PanelProps): React.ReactNode {
     observer.observe(host)
     return () => {
       observer.disconnect()
-      // Unmount is not a close: React re-mounts panes (StrictMode, layout moves)
-      // and the kernel owns the real teardown. Disposing here left live tabs with
-      // no page at all, so the view only hides its container.
-      detachSession(tabKey)
+      // The tab unmounted: drop the guest and release its lease, exactly like the
+      // built-in browser. Keeping a mounted-but-hidden guest was what forced the
+      // visibility heuristics, black panes and reload churn. The address stays in
+      // the checkpoint (sessionStorage) and is restored on the next mount.
+      suspendSession(tabKey)
     }
   }, [tabKey, initialUrl])
 
   useEffect(() => {
-    // props.visible comes from the kernel and can lag behind reality (a selected tab
-    // still reports false). Measure our own layout instead, every tick, but
-    // never let geometry alone hide a pane the kernel says is visible: an
-    // intermediate zero-size wrapper (absolute/flex tricks) is not a hidden tab.
-    const paneVisible = (): { visible: boolean; reason: string } => {
-      const host = hostRef.current
-      if (host === null || !host.isConnected) return { visible: false, reason: 'detached' }
-      let node: HTMLElement | null = host
-      let selfZero = false
-      for (let depth = 0; node !== null && depth < 10; depth += 1) {
-        const style = window.getComputedStyle(node)
-        if (style.display === 'none') return { visible: false, reason: `display:none@${node.tagName.toLowerCase()}` }
-        if (style.visibility === 'hidden') return { visible: false, reason: `visibility:hidden@${node.tagName.toLowerCase()}` }
-        if (depth <= 1 && style.display !== 'contents') {
-          const box = node.getBoundingClientRect()
-          if (box.width <= 1 || box.height <= 1) selfZero = true
-        }
-        node = node.parentElement
-      }
-      if (!selfZero) return { visible: true, reason: 'ok' }
-      // Zero box right around the host: trust the kernel when it says visible.
-      if (props.visible === true) return { visible: true, reason: 'self-zero-but-kernel-visible' }
-      return { visible: false, reason: 'self-zero' }
-    }
-    const reportVisibility = (): void => {
-      const measured = paneVisible()
-      hiddenStreak.current = measured.visible ? 0 : hiddenStreak.current + 1
-      // Three consecutive misses (~2 s) before hiding; show immediately.
-      const visible = measured.visible || hiddenStreak.current < 3
-      if (lastVisibility.current !== visible) {
-        lastVisibility.current = visible
-        void note('pane:visible', { visible, measure: measured.visible, reason: measured.reason })
-      }
-      setPaneState(tabKey, { host: hostRef.current, visible })
-    }
-    reportVisibility()
-    const visibilityTimer = window.setInterval(reportVisibility, 700)
-    window.addEventListener('resize', reportVisibility)
-    return () => {
-      window.clearInterval(visibilityTimer)
-      window.removeEventListener('resize', reportVisibility)
-    }
-  }, [tabKey, initialUrl])
+    // The kernel owns pane visibility: it mounts/positions tab content and the
+    // guest element itself. Our old 700 ms geometry poll could only disagree
+    // with it, and every disagreement hid a live webview (black pane, reloads).
+    // So report the kernel's own answer and let reconcile use the host box only
+    // as a precondition for creating a guest — never as a reason to hide one.
+    setPaneState(tabKey, { host: hostRef.current, visible: props.visible !== false })
+  }, [tabKey, props.visible])
 
   const cancelPick = useCallback((): void => {
     if (!pickingRef.current) return

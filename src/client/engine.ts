@@ -1139,6 +1139,16 @@ export function setSessionRect(tabId: string, visible: boolean): void {
   position(session, visible && activeTabId === tabId)
 }
 
+/** The panel of this tab unmounted: release the guest, keep the checkpoint address.
+ *  The built-in browser does the same; a live hidden guest was the source of the
+ *  visibility heuristics and the black-screen class of bugs. */
+export function suspendSession(tabId: string): void {
+  const session = sessions.get(tabId)
+  if (session === undefined) return
+  if (session.url !== '' && !session.url.startsWith('about:')) rememberUrl(tabId, session.url)
+  closeSession(tabId)
+}
+
 /** The panel of this tab unmounted: hide its container, keep the guest alive. */
 export function detachSession(tabId: string): void {
   const session = sessions.get(tabId)

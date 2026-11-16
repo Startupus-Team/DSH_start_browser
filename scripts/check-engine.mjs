@@ -571,8 +571,34 @@ await check('E26: отмена пикера убирает оверлей и ф�
   return 'cancelActivePick и focusActiveGuest доступны движку'
 })
 
+await check('E27: снятая панель отпускает guest, а адрес восстанавливается при повторном монтаже', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  engine.setPaneState('suspendPane', { url: 'https://keep.example/page', host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 140))
+  const first = engine.guestOf('suspendPane')
+  expect(first !== null, 'гость не создан')
+  first.url = 'https://keep.example/page'
+  first.fire('did-navigate')
+  first.fire('dom-ready')
+  expect(engine.rememberedUrlFor('suspendPane') === 'https://keep.example/page', `checkpoint: ${engine.rememberedUrlFor('suspendPane')}`)
+  engine.suspendSession('suspendPane')
+  expect(engine.guestOf('suspendPane') === null, 'guest не отпущен при снятии панели')
+  // Remount: a new guest must open the checkpoint address, not the default.
+  const host2 = new FakeElement('div')
+  body.appendChild(host2)
+  engine.setPaneState('suspendPane', { host: host2, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 160))
+  const second = engine.guestOf('suspendPane')
+  expect(second !== null, 'гость не создан после повторного монтажа')
+  second.fire('dom-ready')
+  await new Promise((resolve) => setTimeout(resolve, 40))
+  expect(second.loadedUrls.some((url) => url === 'https://keep.example/page'), `загружено: ${JSON.stringify(second.loadedUrls)}`)
+  return 'lease отпущен, checkpoint-адрес восстановлен новым гостем'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 27/27')
+console.log('ENGINE OK: 28/28')

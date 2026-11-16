@@ -338,9 +338,9 @@ export function apply(ctx: ClientContext): void {
     kind: TAB_KIND,
     // Several Startapus tabs may coexist, like the built-in browser.
     multiple: true,
-    // Sidebar keeps the DOM of an inactive tab mounted; without it a panel stops
-    // polling as soon as another tab is focused.
-    keepMounted: true,
+    // Match the built-in browser: an inactive tab unmounts, which drops its guest
+    // and releases the lease. The checkpoint address is restored on the next mount.
+    keepMounted: false,
     priority: 'extension' as const,
     title: () => 'Startapus Browser',
     guide: [{
