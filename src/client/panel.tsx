@@ -165,27 +165,37 @@ function PanelChrome(props: PanelProps): React.ReactNode {
 
   useEffect(() => {
     // props.visible comes from the kernel and can lag behind reality (a selected tab
-    // still reports false). Measure our own layout instead, every tick.
-    const paneVisible = (): boolean => {
-      let node: HTMLElement | null = hostRef.current
-      if (node === null || !node.isConnected) return false
+    // still reports false). Measure our own layout instead, every tick, but
+    // never let geometry alone hide a pane the kernel says is visible: an
+    // intermediate zero-size wrapper (absolute/flex tricks) is not a hidden tab.
+    const paneVisible = (): { visible: boolean; reason: string } => {
+      const host = hostRef.current
+      if (host === null || !host.isConnected) return { visible: false, reason: 'detached' }
+      let node: HTMLElement | null = host
+      let selfZero = false
       for (let depth = 0; node !== null && depth < 10; depth += 1) {
         const style = window.getComputedStyle(node)
-        if (style.display === 'none' || style.visibility === 'hidden') return false
-        const box = node.getBoundingClientRect()
-        if (style.display !== 'contents' && (box.width <= 1 || box.height <= 1)) return false
+        if (style.display === 'none') return { visible: false, reason: `display:none@${node.tagName.toLowerCase()}` }
+        if (style.visibility === 'hidden') return { visible: false, reason: `visibility:hidden@${node.tagName.toLowerCase()}` }
+        if (depth <= 1 && style.display !== 'contents') {
+          const box = node.getBoundingClientRect()
+          if (box.width <= 1 || box.height <= 1) selfZero = true
+        }
         node = node.parentElement
       }
-      return true
+      if (!selfZero) return { visible: true, reason: 'ok' }
+      // Zero box right around the host: trust the kernel when it says visible.
+      if (props.visible === true) return { visible: true, reason: 'self-zero-but-kernel-visible' }
+      return { visible: false, reason: 'self-zero' }
     }
     const reportVisibility = (): void => {
       const measured = paneVisible()
-      hiddenStreak.current = measured ? 0 : hiddenStreak.current + 1
-      // Stay visible until two consecutive misses; show immediately when measured.
-      const visible = measured || hiddenStreak.current < 2
+      hiddenStreak.current = measured.visible ? 0 : hiddenStreak.current + 1
+      // Three consecutive misses (~2 s) before hiding; show immediately.
+      const visible = measured.visible || hiddenStreak.current < 3
       if (lastVisibility.current !== visible) {
         lastVisibility.current = visible
-        void note('pane:visible', { visible, measure: measured })
+        void note('pane:visible', { visible, measure: measured.visible, reason: measured.reason })
       }
       setPaneState(tabKey, { host: hostRef.current, visible })
     }
