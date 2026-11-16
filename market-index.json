@@ -57,12 +57,12 @@
       },
       "versions": [
         {
-          "version": "0.26.4",
-          "publishTimestamp": 1794469676,
+          "version": "0.26.5",
+          "publishTimestamp": 1794814453,
           "source": {
             "type": "git",
             "url": "https://github.com/Startupus-Team/DSH_start_browser",
-            "commit": "395b8a64a95a9deaad34da5d75eff05e3ab8ff49"
+            "commit": "4ca82e73b12aa1f2ab48d7f8c5c1a1ce2a9a9dfe"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.3 <0.3.0"
