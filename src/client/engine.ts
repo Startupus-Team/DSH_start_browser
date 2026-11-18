@@ -65,6 +65,8 @@ interface Session {
   /** The container is not laid out: the kernel may detach the guest, so a
    *  re-attached guest can come back as about:blank (black screen). */
   hidden: boolean
+  /** Page zoom factor of this tab (1 = 100%); the toolbar shows it. */
+  zoom: number
 }
 
 export interface EngineState {
@@ -80,6 +82,8 @@ export interface EngineState {
   panels: number
   /** Last main-frame load failure, so the pane can offer a retry instead of a dead error page. */
   lastLoadError: { code: number; description: string; url: string; at: number } | null
+  /** Current page zoom of the active tab, 1 = 100%. */
+  zoom: number
 }
 
 // Injected by build.mjs; guarded so standalone tests of this module still load.
@@ -217,6 +221,7 @@ export function engineState(): EngineState {
     hasGuest: activeGuest() !== null,
     counters: { ...counters },
     lastLoadError: lastLoadError === null ? null : { ...lastLoadError },
+    zoom: activeTabId === null ? 1 : (sessions.get(activeTabId)?.zoom ?? 1),
     panes: [...paneState.entries()].map(([tabId, state]) => ({ tabId, url: state.url, visible: state.visible })),
   }
 }
@@ -463,6 +468,33 @@ export function desiredUrlFor(tabId: string): string | null {
   if (state === undefined) return remembered === '' ? null : remembered
   if (state.url === START_URL && remembered !== '') return remembered
   return state.url
+}
+
+/** Current zoom of one tab (1 = 100%). */
+export function zoomOf(tabId: string): number {
+  return sessions.get(tabId)?.zoom ?? 1
+}
+
+/** Set one tab's page zoom, clamped to the range ui_viewport accepts. */
+export function setZoom(tabId: string, zoom: number): boolean {
+  const session = sessions.get(tabId)
+  if (session === undefined || !Number.isFinite(zoom)) return false
+  const applied = Math.min(3, Math.max(0.25, zoom))
+  session.zoom = applied
+  try {
+    session.guest?.setZoomFactor?.(applied)
+  } catch {
+    // guest gone: the value still applies on the next dom-ready
+  }
+  setStatus(`масштаб ${Math.round(applied * 100)}%`)
+  notify()
+  return true
+}
+
+/** Toolbar chip: reset the active tab to 100%. */
+export function resetActiveZoom(): boolean {
+  if (activeTabId === null) return false
+  return setZoom(activeTabId, 1)
 }
 
 /** Human pressed «Повторить» after a load error: reload, or reopen the address. */
@@ -754,6 +786,7 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     navigated: false,
     colorScheme: null,
     hidden: false,
+    zoom: 1,
   }
   sessions.set(tabId, session)
   notify()
@@ -794,6 +827,13 @@ async function createSession(tabId: string, initialUrl: string, host: HTMLElemen
     created.addEventListener('did-finish-load', reapplyScheme)
     created.addEventListener('dom-ready', () => {
       session.ready = true
+      // A webview can inherit the embedder's page zoom; pin the tab's own factor
+      // so the page renders at 100% by default, like a real browser.
+      try {
+        created.setZoomFactor?.(session.zoom)
+      } catch {
+        // zoom is cosmetic here: the page still opens
+      }
       void note('guest:dom-ready', { tabId: session.tabId, navigated: session.navigated, pending: hostOf(session.pendingUrl) })
       installNetHook()
       reapplyScheme()
@@ -1940,8 +1980,12 @@ export function startEngine(): () => void {
           const view = await readyView(command)
           if (view !== null && view.setZoomFactor !== undefined && Number.isFinite(zoom)) {
             try {
-              view.setZoomFactor(Math.min(2, Math.max(0.5, zoom)))
-              setStatus(`масштаб ${zoom}`)
+              const applied = Math.min(2, Math.max(0.5, zoom))
+              view.setZoomFactor(applied)
+              const tabId = command.tabId ?? activeTabId
+              const target = tabId === null ? undefined : sessions.get(tabId)
+              if (target !== undefined) target.zoom = applied
+              setStatus(`масштаб ${Math.round(applied * 100)}%`)
             } catch (error) {
               setStatus(`масштаб не применён: ${String(error)}`)
             }
@@ -1967,6 +2011,9 @@ export function startEngine(): () => void {
               if (from <= 0 || target <= 0) throw new Error('ширина недоступна')
               const nextZoom = Math.min(3, Math.max(0.25, currentZoom * (from / target)))
               view.setZoomFactor(nextZoom)
+              const widthTab = command.tabId ?? activeTabId
+              const widthSession = widthTab === null ? undefined : sessions.get(widthTab)
+              if (widthSession !== undefined) widthSession.zoom = nextZoom
               await new Promise((resolve) => setTimeout(resolve, 300))
               const after = await readWidth()
               await report(base as string, { viewportResult: { width: target, innerWidth: after, zoom: nextZoom, error: '' } })

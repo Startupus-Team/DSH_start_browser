@@ -38,6 +38,7 @@ import {
   restoreCrashedTab,
   crashedInfo,
   retryLoad,
+  resetActiveZoom,
   setSessionRect,
   setStatus,
   setViewHooks,
@@ -56,6 +57,8 @@ const STYLES = `
 .dsh-startapus-browser-btn { display:inline-flex; align-items:center; justify-content:center; width:26px; height:26px; border:none; border-radius:6px; background:transparent; color:inherit; cursor:pointer; }
 .dsh-startapus-browser-btn svg { width:16px; height:16px; display:block; }
 .dsh-startapus-browser-btn:hover { background:color-mix(in srgb, currentColor 10%, transparent); }
+.dsh-startapus-browser-zoom { flex:none; height:26px; padding:0 8px; border:1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius:6px; background:transparent; color:inherit; font:inherit; cursor:pointer; font-variant-numeric:tabular-nums; }
+.dsh-startapus-browser-zoom:hover { background:color-mix(in srgb, currentColor 10%, transparent); }
 .dsh-startapus-browser-address { flex:1; min-width:0; height:26px; padding:0 8px; border:1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius:6px; background:transparent; color:inherit; font:inherit; outline:none; }
 .dsh-startapus-browser-status { padding:4px 10px 8px; opacity:0.72; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .dsh-startapus-browser-host { flex:1; min-height:0; }
@@ -349,6 +352,18 @@ function PanelChrome(props: PanelProps): React.ReactNode {
           }}
           aria-label="Адрес"
         />
+        <button
+          type="button"
+          className="dsh-startapus-browser-zoom"
+          onClick={() => {
+            const reset = resetActiveZoom()
+            setStatus(reset ? 'масштаб страницы 100%' : 'масштаб: нет активной вкладки')
+          }}
+          title="Масштаб страницы — нажмите, чтобы вернуть 100%"
+          aria-label={`Масштаб страницы ${Math.round((snapshot.zoom ?? 1) * 100)} процентов`}
+        >
+          {Math.round((snapshot.zoom ?? 1) * 100)}%
+        </button>
         <button
           type="button"
           className="dsh-startapus-browser-btn dsh-startapus-browser-tasksBtn"

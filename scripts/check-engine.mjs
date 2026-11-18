@@ -65,7 +65,7 @@ class FakeElement {
   focus() { this.focused = (this.focused ?? 0) + 1 }
   getTitle() { return this.title }
   reload() { this.reloaded = (this.reloaded ?? 0) + 1 }
-  setZoomFactor() {}
+  setZoomFactor(factor) { this.zoomFactor = factor }
   getZoomFactor() { return 1 }
   async capturePage() { return { toDataURL: () => 'data:image/png;base64,AA==', getSize: () => ({ width: 10, height: 10 }) } }
   async executeJavaScript() { return '' }
@@ -597,8 +597,27 @@ await check('E27: снятая панель отпускает guest, а адр�
   return 'lease отпущен, checkpoint-адрес восстановлен новым гостем'
 })
 
+await check('E28: масштаб вкладки — 100% по умолчанию, меняется и показывается', async () => {
+  const host = new FakeElement('div')
+  body.appendChild(host)
+  engine.setPaneState('zoomPane', { url: 'https://zoom.example/', host, visible: true })
+  await new Promise((resolve) => setTimeout(resolve, 140))
+  const guest = engine.guestOf('zoomPane')
+  expect(guest !== null, 'гость не создан')
+  guest.fire('dom-ready')
+  // A webview must not inherit the embedder's zoom: dom-ready pins it to 1.
+  expect(guest.zoomFactor === 1, `унаследованный масштаб: ${String(guest.zoomFactor)}`)
+  expect(engine.engineState().zoom === 1, `state zoom: ${String(engine.engineState().zoom)}`)
+  expect(engine.setZoom('zoomPane', 1.5) === true, 'setZoom не сработал')
+  expect(guest.zoomFactor === 1.5, `setZoomFactor: ${String(guest.zoomFactor)}`)
+  expect(engine.engineState().zoom === 1.5, `state zoom после setZoom: ${String(engine.engineState().zoom)}`)
+  expect(engine.resetActiveZoom() === true, 'resetActiveZoom не сработал')
+  expect(engine.engineState().zoom === 1, `state zoom после сброса: ${String(engine.engineState().zoom)}`)
+  return '100% по умолчанию, setZoom/reset и state.zoom согласованы'
+})
+
 if (failed > 0) {
   console.log(`ENGINE FAILED: ${failed}`)
   process.exit(1)
 }
-console.log('ENGINE OK: 28/28')
+console.log('ENGINE OK: 29/29')
